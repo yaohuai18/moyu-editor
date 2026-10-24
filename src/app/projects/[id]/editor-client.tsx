@@ -1231,6 +1231,17 @@ export default function EditorClient({
           <span className="sm:hidden">设置</span>
         </Link>
 
+        {/* 导出：把作品带走（txt / md，全书或当前章）。
+            这是「用户有权把自己的稿子拿走」的入口，不是可选装饰。 */}
+        <ExportMenu
+          projectId={project.id}
+          projectTitle={project.title}
+          activeChapter={
+            project.chapters.find((item) => item.id === activeChapterId) ?? null
+          }
+          onBeforeExport={saveNow}
+        />
+
         <SaveIndicator
           status={saveStatus}
           lastSavedAt={lastSavedAt}
@@ -2068,4 +2079,150 @@ function AiIndicator({
   }
 
   return null;
+}
+
+/**
+ * 导出菜单：把作品或当前章存成文件。
+ *
+ * 为什么点导出前必须先 await 一次保存：
+ * 自动保存有 1.2 秒防抖，用户打完最后一个字立刻点导出，库里还是旧稿。
+ * 不先存一次，导出的就是「差一截」的版本 —— 这种错最难跟用户解释，
+ * 他只会说「导出来的文件不对」。保存失败时也停下来，不下载旧内容。
+ *
+ * 为什么用 window.location.assign 而不是 fetch + Blob：
+ * 接口响应带 Content-Disposition: attachment，浏览器会原生走下载、
+ * 不离开页面。用 Blob 就得把整本书塞进页面内存再拼，没必要。
+ */
+function ExportMenu({
+  projectId,
+  projectTitle,
+  activeChapter,
+  onBeforeExport,
+}: {
+  projectId: string;
+  projectTitle: string;
+  activeChapter: { id: string; title: string; orderIndex: number } | null;
+  /** 返回是否保存成功；失败（冲突/断网）就不要继续下载 */
+  onBeforeExport: () => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // 点菜单外面、按 Esc 都收起来。不做这个，菜单会一直挂在页面上
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  async function download(url: string) {
+    setOpen(false);
+    setBusy(true);
+
+    try {
+      const saved = await onBeforeExport();
+
+      if (!saved) {
+        return;
+      }
+
+      window.location.assign(url);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div ref={menuRef} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        disabled={busy}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={`导出「${projectTitle}」或当前章（txt / md）`}
+        className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 transition hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
+      >
+        {busy ? "准备中…" : "导出"}
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          aria-label="导出选项"
+          className="absolute right-0 z-20 mt-1 w-52 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
+        >
+          <p className="px-3 py-1.5 text-xs text-slate-400">全书</p>
+          <ExportItem
+            label="纯文本（.txt）"
+            onSelect={() => void download(`/api/projects/${projectId}/export?format=txt`)}
+          />
+          <ExportItem
+            label="Markdown（.md）"
+            onSelect={() => void download(`/api/projects/${projectId}/export?format=md`)}
+          />
+
+          {activeChapter && (
+            <>
+              <p className="mt-1 border-t border-slate-100 px-3 pb-1.5 pt-2 text-xs text-slate-400">
+                当前章节
+              </p>
+              <ExportItem
+                label="纯文本（.txt）"
+                onSelect={() =>
+                  void download(`/api/chapters/${activeChapter.id}/export?format=txt`)
+                }
+              />
+              <ExportItem
+                label="Markdown（.md）"
+                onSelect={() =>
+                  void download(`/api/chapters/${activeChapter.id}/export?format=md`)
+                }
+              />
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExportItem({
+  label,
+  onSelect,
+}: {
+  label: string;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onSelect}
+      className="block w-full px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-50 hover:text-blue-600"
+    >
+      {label}
+    </button>
+  );
 }
