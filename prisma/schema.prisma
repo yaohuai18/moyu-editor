@@ -1,0 +1,201 @@
+// 墨语编辑器 —— 数据模型
+// 本地开发使用 SQLite（零安装）。后续切 Supabase Postgres 时，
+// 只需要把 provider 改成 "postgresql" 并更新 DATABASE_URL，业务代码无需改动。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String     @id @default(cuid())
+  email         String     @unique
+  passwordHash  String?
+  name          String?
+  emailVerified DateTime?
+  image         String?
+  /// 会话代次。改密码 / 重置密码时 +1，用来把**其它设备上的旧登录态踢掉**。
+  ///
+  /// 为什么需要它：会话是加密 Cookie（JWT 策略），服务端不存会话记录，
+  /// 所以「改了密码」这件事本身不会让旧 Cookie 失效 —— 别人拿着旧 Cookie
+  /// 还能登到 Cookie 过期为止。requireUser() 每次都会比对这一列，
+  /// 对不上就当作未登录（401），旧设备自然就得重新登录。
+  tokenVersion  Int        @default(0)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  projects      Project[]
+  revisions     Revision[]
+  aiUsages      AiUsage[]
+}
+
+/// Auth.js 账号表。当前只用邮箱密码（JWT 会话），这张表留着是为了
+/// 以后接第三方登录（GitHub / 微信）时不用再改表结构。
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+}
+
+/// Auth.js 会话表。当前用的是 jwt 策略，数据实际存在加密 Cookie 里，
+/// 这张表暂时是空的；改成数据库会话时会自动用上。
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Project {
+  id           String        @id @default(cuid())
+  userId       String
+  title        String
+  description  String?
+  genre        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chapters     Chapter[]
+  characters   Character[]
+  styleProfile StyleProfile?
+
+  /// 首页「我的作品，按最近编辑倒序」——这条查询决定了首页打开速度
+  @@index([userId, updatedAt])
+}
+
+model Chapter {
+  id         String     @id @default(cuid())
+  projectId  String
+  title      String
+  content    String     @default("")
+  orderIndex Int        @default(0)
+  wordCount  Int        @default(0)
+  /// 乐观锁版本号：每保存一次 +1。
+  /// 客户端提交时带上自己看到的版本，服务端发现对不上就返回 409，
+  /// 避免「A 标签页的旧内容覆盖掉 B 标签页刚写的新内容」。
+  version    Int        @default(0)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  project    Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  revisions  Revision[]
+
+  /// 取某部作品的章节列表；顺带覆盖「按章节查最近改动」
+  @@index([projectId, updatedAt])
+}
+
+model Revision {
+  id           String   @id @default(cuid())
+  chapterId    String
+  userId       String?
+  content      String
+  /// 这一版有多少字（去空白字符数，规则见 src/lib/wordCount.ts）。
+  ///
+  /// 单独存一列是为了**版本历史列表**：列表只需要「时间 / 原因 / 字数」，
+  /// 如果每次都要把每条版本的正文都读出来再算字数，一章 3 万字、列 30 条
+  /// 就是 90 万字的读取量，白花 IO。存下来之后列表查询完全不碰 content。
+  chars        Int      @default(0)
+  changeReason String?
+  createdAt    DateTime @default(now())
+
+  chapter      Chapter  @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  /// 版本历史永远是「某一章，按时间倒序取 30 条」——索引要按这个顺序建
+  @@index([chapterId, createdAt])
+}
+
+model Character {
+  id             String   @id @default(cuid())
+  projectId      String
+  name           String
+  description    String?
+  speakingStyle  String?
+  personality    String?
+  forbiddenWords String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model StyleProfile {
+  id             String   @id @default(cuid())
+  projectId      String   @unique
+  tone           String?
+  viewpoint      String?
+  sentenceStyle  String?
+  description    String?
+  forbiddenWords String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+/// AI 用量台账。每调用一次 AI 记一条（成功的、真失败的、被拦下来的都记），
+/// 用来算「今天用了几次」「花了多少钱」「失败率高不高」。
+///
+/// 存的是**长度**（字符数）而不是正文本身：
+/// 一是正文已经在 Chapter / Revision 里了，重复存只是把数据库撑大；
+/// 二是这张表会被用来做统计，越少敏感内容越好。
+///
+/// ⚠️ 记的是「调用」，不等于「消耗额度」——
+/// 只有 ok=true 的才算用掉一次额度，见 src/lib/ai-usage.ts 的 countTodayUsage。
+model AiUsage {
+  id          String   @id @default(cuid())
+  userId      String
+  /// 作品/章节可能已经被删，所以这里只是普通字符串，不做外键
+  /// —— 用量是「已经花掉的钱」，不该因为删了作品就消失。
+  projectId   String?
+  chapterId   String?
+  mode        String
+  model       String
+  inputChars  Int
+  outputChars Int
+  /// 这次调用成功没有。失败也记一条是为了能算**失败率**——
+  /// 只记成功的话，上游挂了反而在报表上看不出来。
+  /// 额度只认 ok=true，所以失败的记录不会扣用户次数。
+  ok          Boolean  @default(true)
+  /// 这次调用花了多久（毫秒）。上游变慢是「账单不变但体验崩了」的典型前兆。
+  durationMs  Int?
+  /// 失败时的错误编号（RATE_LIMITED / DAILY_QUOTA_EXCEEDED / AI_PROVIDER_ERROR …），
+  /// 与 src/lib/log.ts 的 ErrorCode 同一套；成功时为 null。
+  errorCode   String?
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// 查「某人某天的用量」走这条
+  @@index([userId, createdAt])
+  /// 查「全站今天的调用量 / 失败率」走这条
+  @@index([createdAt])
+}

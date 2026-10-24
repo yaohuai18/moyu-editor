@@ -1,0 +1,53 @@
+{
+  "name": "moyu-editor",
+  "version": "1.0.0-rc.2",
+  "private": true,
+  "scripts": {
+    "app": "next build && next start --port 3001",
+    "serve": "next start --port 3001",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "vitest run tests/unit",
+    "test:watch": "vitest",
+    "test:api": "node scripts/api-test.mjs",
+    "test:all": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "preflight": "tsx scripts/preflight.ts",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:backup": "tsx scripts/backup-db.ts",
+    "db:restore-drill": "tsx scripts/restore-drill.ts",
+    "db:studio": "prisma studio",
+    "works:move": "tsx scripts/reassign-works.ts",
+    "ops:daily": "tsx scripts/ops-daily.ts",
+    "ops:db": "tsx scripts/ops-db.ts",
+    "ops:ai": "tsx scripts/ops-ai.ts",
+    "ops:release": "tsx scripts/ops-release.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "bcryptjs": "^3.0.3",
+    "next": "16.3.6",
+    "next-auth": "^5.0.0-beta.32",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.6",
+    "prisma": "^6.19.3",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.15",
+    "typescript": "^5",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.2"
+  }
+}
