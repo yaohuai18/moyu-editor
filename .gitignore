@@ -67,3 +67,6 @@ next-env.d.ts
 # 历次构建产物残留（Next 的 .next 已在上方 /`.next/` 排除）
 /.next-old-*
 /.next-stale-*
+
+# 一键验证日志（生成物，勿提交）
+/verify.log
