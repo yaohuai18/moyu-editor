@@ -155,6 +155,53 @@ describe("文件名", () => {
     expect(filename.length).toBeLessThan(70);
     expect(filename.endsWith(".txt")).toBe(true);
   });
+
+  /**
+   * 截断点正好压在 emoji 中间的情况。
+   *
+   * emoji 在 JS 里占两个 UTF-16 码元，以前按码元 slice 会留下半个代理项，
+   * 后面 encodeURIComponent 直接抛 URIError，导出接口变成 500 ——
+   * 用户看到的是「点导出页面跳到一屏 JSON」。
+   */
+  it("书名截断点压 emoji 中间也不留半个字符", () => {
+    // 书名上限 100 字符；59 汉字 + 😀(2 码元) + 39 字母 = 100，截断点 60 落在 emoji 里
+    const filename = buildProjectExportFilename(
+      "罪".repeat(59) + "😀" + "x".repeat(39),
+      "txt"
+    );
+
+    expect(filename.endsWith(".txt")).toBe(true);
+    expect(() => contentDispositionHeader(filename)).not.toThrow();
+    // 半个代理项会在这里现形
+    expect(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(filename)
+    ).toBe(false);
+  });
+
+  it("单章导出：书名(20)与章名(40)两个截断点都压在 emoji 上也不炸", () => {
+    const projectTitle = "a".repeat(19) + "😀" + "b".repeat(20);
+    const chapterTitle = "a".repeat(33) + "😀";
+
+    expect(() =>
+      contentDispositionHeader(
+        buildChapterExportFilename(
+          projectTitle,
+          { title: "雨夜", orderIndex: 0 },
+          "txt"
+        )
+      )
+    ).not.toThrow();
+
+    expect(() =>
+      contentDispositionHeader(
+        buildChapterExportFilename(
+          "罪域",
+          { title: chapterTitle, orderIndex: 0 },
+          "txt"
+        )
+      )
+    ).not.toThrow();
+  });
 });
 
 describe("contentDispositionHeader", () => {
@@ -179,5 +226,18 @@ describe("contentDispositionHeader", () => {
 
     expect(header).toContain("%28");
     expect(header).toContain("%29");
+  });
+
+  /**
+   * 兜底：万一还是有人塞进来非法字符串（半个代理项），不许抛错。
+   * 一个字符难看，好过整个导出接口 500。
+   */
+  it("文件名里有非法代理项也不抛错，降级成 ASCII 兜底", () => {
+    const header = contentDispositionHeader("坏\uD83D名字.txt");
+
+    expect(header.startsWith("attachment;")).toBe(true);
+    expect(header).toContain("filename*=UTF-8''");
+    // 头部必须是纯 ASCII，塞半个代理项进去会让整个响应头非法
+    expect(/^[\x20-\x7e]*$/.test(header)).toBe(true);
   });
 });

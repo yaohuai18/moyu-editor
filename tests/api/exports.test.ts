@@ -153,6 +153,74 @@ describe("单章导出", () => {
   });
 });
 
+describe("书名里的 emoji 正压在截断点上", () => {
+  /**
+   * 一个 emoji 在 JS 里占两个 UTF-16 码元。按码元 slice 截断时，截断点很可能
+   * 落在 emoji 中间，留下半个代理项 —— 非法字符串，encodeURIComponent 直接抛
+   * URIError，导出接口 500，用户点导出会看到一屏 {"error":"导出作品失败"}。
+   *
+   * 这里的书名刻意把 emoji 摆在两处截断点上：
+   *   第 20 个码元 → 单章导出的书名截断点
+   *   第 60 个码元 → 全书导出的书名截断点
+   * 章名再单独把 emoji 摆在 40 那个截断点上。
+   */
+  const TITLE =
+    "a".repeat(19) + "😀" + "a".repeat(38) + "😀" + "b".repeat(39);
+
+  let emojiProjectId: string;
+  let emojiChapterId: string;
+
+  beforeAll(async () => {
+    emojiProjectId = await createProject(author, TITLE);
+
+    const detail = await author.json<{ chapters: { id: string }[] }>(
+      `/api/projects/${emojiProjectId}`
+    );
+
+    emojiChapterId = detail.body.chapters[0].id;
+
+    // 章名截断点是 40，前缀「第 1 章 」占 6 个码元，所以标题给 33 个字符 + emoji
+    await author.patch(`/api/chapters/${emojiChapterId}`, {
+      title: "a".repeat(33) + "😀",
+      content: "正文",
+    });
+  });
+
+  afterAll(async () => {
+    await deleteProjectQuietly(author, emojiProjectId);
+  });
+
+  it("全书导出返回 200，文件名是能解码回来的完整 UTF-8", async () => {
+    const response = await author.raw(
+      `/api/projects/${emojiProjectId}/export?format=txt`
+    );
+    const disposition = response.headers.get("content-disposition") || "";
+
+    expect(response.status).toBe(200);
+    expect(disposition).toContain("filename*=UTF-8''");
+    expect(() =>
+      decodeURIComponent(disposition.split("filename*=UTF-8''")[1])
+    ).not.toThrow();
+  });
+
+  it("单章导出（书名 20、章名 40 两个截断点）也返回 200", async () => {
+    const response = await author.raw(
+      `/api/chapters/${emojiChapterId}/export?format=txt`
+    );
+    const disposition = response.headers.get("content-disposition") || "";
+
+    expect(response.status).toBe(200);
+    expect(disposition).toContain("filename*=UTF-8''");
+
+    const filename = decodeURIComponent(
+      disposition.split("filename*=UTF-8''")[1]
+    );
+
+    expect(filename).toContain("第 1 章");
+    expect(filename.endsWith(".txt")).toBe(true);
+  });
+});
+
 describe("权限", () => {
   it("没登录导不了（401）", async () => {
     expectFailure(

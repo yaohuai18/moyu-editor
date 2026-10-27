@@ -46,10 +46,12 @@
 | PATCH | `/api/projects/[id]/settings` | 改作品名/简介/类型 + 风格档案三字段 |
 | DELETE | `/api/projects/[id]` | 删作品，级联删章节/版本/人物卡 |
 | POST | `/api/projects/[id]/chapters` | 新建章节 |
-| PATCH | `/api/projects/[id]/chapters` | 批量调序。body `{ orderedIds: string[] }`，顺序即最终顺序；缺参数 400，含不属于本作品的 id 会被拒 |
+| PUT | `/api/projects/[id]/chapters` | 批量调序。body `{ orderedIds: string[] }`，顺序即最终顺序；缺参数 400，含不属于本作品的 id 会被拒 |
 | GET | `/api/chapters/[id]` | 取章节全文（含 `version`） |
 | PATCH | `/api/chapters/[id]` | 保存章节（**这是唯一会留版本记录的入口**） |
 | DELETE | `/api/chapters/[id]` | 删章节，并把后续章节的顺序号补齐不留空档 |
+| GET | `/api/projects/[id]/export?format=txt\|md` | 导出全书，直接返回文件流（`Content-Disposition: attachment`，不是 JSON） |
+| GET | `/api/chapters/[id]/export?format=txt\|md` | 导出单章，同上 |
 
 **列表分页的响应结构**
 

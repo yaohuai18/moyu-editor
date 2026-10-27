@@ -512,6 +512,21 @@ export default function EditorClient({
         return;
       }
 
+      // 先落盘、再动界面状态。顺序反过来就有个要命的时间差：清空面板后保存
+      // 失败了，用户看着界面已经切走、刚敲的字却没写进库里，等于凭空吞稿。
+      const saved = await saveNow();
+
+      if (!saved) {
+        // 冲突时 saveNow 已经给过更具体的那句提示，别覆盖掉
+        if (!conflictRef.current) {
+          setPanelNotice(
+            "当前章节没有保存成功，已取消切换章节（避免丢字），请稍后再试"
+          );
+        }
+
+        return;
+      }
+
       setPanelNotice("");
       // 换章时清掉上一章的诊断/润色结果与打开的版本预览，避免张冠李戴
       setDiagnosis([]);
@@ -526,7 +541,6 @@ export default function EditorClient({
       // 上一章的冲突状态不该带到这一章
       conflictRef.current = false;
       setConflict(false);
-      await saveNow();
 
       try {
         const response = await fetch(`/api/chapters/${chapterId}`);
@@ -2089,10 +2103,37 @@ function AiIndicator({
  * 不先存一次，导出的就是「差一截」的版本 —— 这种错最难跟用户解释，
  * 他只会说「导出来的文件不对」。保存失败时也停下来，不下载旧内容。
  *
- * 为什么用 window.location.assign 而不是 fetch + Blob：
- * 接口响应带 Content-Disposition: attachment，浏览器会原生走下载、
- * 不离开页面。用 Blob 就得把整本书塞进页面内存再拼，没必要。
+ * 为什么不再用 window.location.assign：
+ * 正常下载时浏览器确实不会离开页面（响应带 Content-Disposition: attachment），
+ * 但**出错时它会**。接口返回 500 JSON 的话，浏览器把那个 JSON 当网页打开，
+ * 用户的编辑页就被导航走了 —— 稿子没丢（导出前刚存过），人却被踢出了编辑器，
+ * 只看到一屏 {"error":"导出作品失败"}。所以改成 fetch 先拿响应：成功才造 blob
+ * 触发下载，失败就在按钮旁边显示提示，页面不动。
  */
+function filenameFromDisposition(
+  header: string | null,
+  fallback: string
+): string {
+  if (!header) {
+    return fallback;
+  }
+
+  // 服务端同时给了 filename= 和 filename*=；RFC 5987 那份才是中文正确版
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(header);
+
+  if (utf8) {
+    try {
+      return decodeURIComponent(utf8[1]);
+    } catch {
+      // 编码坏了就往下走 ASCII 兜底
+    }
+  }
+
+  const plain = /filename="([^"]+)"/i.exec(header);
+
+  return plain ? plain[1] : fallback;
+}
+
 function ExportMenu({
   projectId,
   projectTitle,
@@ -2107,6 +2148,7 @@ function ExportMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
 
   // 点菜单外面、按 Esc 都收起来。不做这个，菜单会一直挂在页面上
@@ -2136,9 +2178,10 @@ function ExportMenu({
     };
   }, [open]);
 
-  async function download(url: string) {
+  async function download(url: string, fallbackName: string) {
     setOpen(false);
     setBusy(true);
+    setError("");
 
     try {
       const saved = await onBeforeExport();
@@ -2147,7 +2190,34 @@ function ExportMenu({
         return;
       }
 
-      window.location.assign(url);
+      const response = await fetch(url, { cache: "no-store" });
+
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+
+        throw new Error(
+          data?.error ? data.error : `导出失败（HTTP ${response.status}）`
+        );
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+
+      anchor.href = objectUrl;
+      anchor.download = filenameFromDisposition(
+        response.headers.get("Content-Disposition"),
+        fallbackName
+      );
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      // 立刻 revoke 会让部分浏览器来不及读完 blob，延后一拍再收
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "导出失败");
     } finally {
       setBusy(false);
     }
@@ -2157,7 +2227,10 @@ function ExportMenu({
     <div ref={menuRef} className="relative shrink-0">
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          setError("");
+          setOpen((value) => !value);
+        }}
         disabled={busy}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -2166,6 +2239,15 @@ function ExportMenu({
       >
         {busy ? "准备中…" : "导出"}
       </button>
+
+      {error && (
+        <p
+          role="alert"
+          className="absolute right-0 top-full z-30 mt-1 w-64 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-600 shadow-lg"
+        >
+          {error}
+        </p>
+      )}
 
       {open && (
         <div
@@ -2176,11 +2258,21 @@ function ExportMenu({
           <p className="px-3 py-1.5 text-xs text-slate-400">全书</p>
           <ExportItem
             label="纯文本（.txt）"
-            onSelect={() => void download(`/api/projects/${projectId}/export?format=txt`)}
+            onSelect={() =>
+              void download(
+                `/api/projects/${projectId}/export?format=txt`,
+                `${projectTitle}.txt`
+              )
+            }
           />
           <ExportItem
             label="Markdown（.md）"
-            onSelect={() => void download(`/api/projects/${projectId}/export?format=md`)}
+            onSelect={() =>
+              void download(
+                `/api/projects/${projectId}/export?format=md`,
+                `${projectTitle}.md`
+              )
+            }
           />
 
           {activeChapter && (
@@ -2191,13 +2283,19 @@ function ExportMenu({
               <ExportItem
                 label="纯文本（.txt）"
                 onSelect={() =>
-                  void download(`/api/chapters/${activeChapter.id}/export?format=txt`)
+                  void download(
+                    `/api/chapters/${activeChapter.id}/export?format=txt`,
+                    `${projectTitle}-第${activeChapter.orderIndex + 1}章.txt`
+                  )
                 }
               />
               <ExportItem
                 label="Markdown（.md）"
                 onSelect={() =>
-                  void download(`/api/chapters/${activeChapter.id}/export?format=md`)
+                  void download(
+                    `/api/chapters/${activeChapter.id}/export?format=md`,
+                    `${projectTitle}-第${activeChapter.orderIndex + 1}章.md`
+                  )
                 }
               />
             </>

@@ -68,9 +68,20 @@ function clampFilenamePart(value: string, max: number): string {
     return value;
   }
 
-  const sliced = value.slice(0, max).replace(/[.\s]+$/, "");
+  /**
+   * 按「码点」切，不能按 UTF-16 码元切。
+   *
+   * 一个 emoji（比如 😀）在 JS 里占两个码元，`slice(0, max)` 很可能正好切在
+   * 它中间，留下半个代理项。半个代理项是非法字符串，后面
+   * `encodeURIComponent` 会直接抛 URIError，整个导出接口变成 500 —— 用户看到
+   * 的就是「点导出没反应」或者「页面跳到一个报错 JSON」。
+   *
+   * Array.from 按码点拆分，emoji 整体保留或整体丢弃，不会切一半。
+   */
+  const chars = Array.from(value).slice(0, max).join("");
+  const sliced = chars.replace(/[.\s]+$/, "");
 
-  return sliced || value.slice(0, max);
+  return sliced || chars;
 }
 
 // ---------------------------------------------------------------------------
@@ -258,10 +269,27 @@ export function contentDispositionHeader(filename: string): string {
     .replace(/[^\x20-\x7e]/g, "_")
     .replace(/["\\]/g, "_");
 
-  const encoded = encodeURIComponent(filename).replace(
-    /['()!*]/g,
-    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
-  );
+  const encoded = encodeRfc5987(filename) ?? encodeRfc5987(asciiFallback) ?? "";
 
   return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
+}
+
+/**
+ * RFC 5987 的百分号编码。
+ *
+ * encodeURIComponent 本身不编码 ' ( ) ! *，但 RFC 5987 要求这几个也转义，
+ * 否则某些浏览器会拒绝整个头部。
+ *
+ * 传进来非法字符串（比如被截断的半个 emoji）时 encodeURIComponent 会抛
+ * URIError，这里返回 null 交给调用方降级 —— 文件名再难看得好过整个导出 500。
+ */
+function encodeRfc5987(value: string): string | null {
+  try {
+    return encodeURIComponent(value).replace(
+      /['()!*]/g,
+      (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+    );
+  } catch {
+    return null;
+  }
 }
