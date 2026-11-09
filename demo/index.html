@@ -10,6 +10,10 @@
   ─────────────────────────────
   · 纯前端单文件实现：无构建、无依赖、无任何网络请求
   · 数据全部保存在本机浏览器 localStorage 中，不上传任何服务器
+  · 已知边界（2026-11-09 用 Chrome headless 冷启动实测确认）：
+    写入走 800ms 防抖，且 Chromium 的 localStorage 落盘是异步的。正常刷新、
+    正常关闭窗口不会丢；但 taskkill /F 强杀进程、浏览器崩溃、断电可能让
+    最后一次编辑来不及落盘。页面底部有面向用户的同一条提示。
   · 完整版（账号系统 / AI 诊断润色 / 版本历史 / 导出中心）见 GitHub 仓库
     https://github.com/yaohuai18/moyu-editor
   · 本文件可用于离线演示：双击即开，公司电脑无需安装任何软件
@@ -356,6 +360,12 @@
     </div>
   </section>
 </main>
+
+<footer class="wrap" style="padding-top:0; padding-bottom:36px;">
+  <p style="color:var(--gray-400); font-size:12px; line-height:1.75; border-top:1px solid var(--gray-200); padding-top:14px;">
+    数据保存在本机浏览器的 localStorage 中，不联网、不上传。正常刷新或关闭窗口不会丢失；但强制结束浏览器进程、浏览器崩溃或断电时，<b style="color:var(--gray-500); font-weight:600;">最近 0.8 秒内的编辑可能来不及落盘</b>。重要内容请用上方「导出」随手存一份副本。
+  </p>
+</footer>
 
 <!-- 删除确认弹层 -->
 <div class="modal-mask" id="modal-mask">
