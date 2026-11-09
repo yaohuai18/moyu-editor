@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>墨语编辑器 · 体验版（离线）</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232563eb'/%3E%3Ctext x='16' y='22' font-size='17' font-family='sans-serif' font-weight='700' fill='%23fff' text-anchor='middle'%3E墨%3C/text%3E%3C/svg%3E">
+<!--
+  墨语编辑器 · 离线体验版 demo
+  ─────────────────────────────
+  · 纯前端单文件实现：无构建、无依赖、无任何网络请求
+  · 数据全部保存在本机浏览器 localStorage 中，不上传任何服务器
+  · 完整版（账号系统 / AI 诊断润色 / 版本历史 / 导出中心）见 GitHub 仓库
+    https://github.com/yaohuai18/moyu-editor
+  · 本文件可用于离线演示：双击即开，公司电脑无需安装任何软件
+-->
+<style>
+  :root {
+    --blue-600: #2563eb;
+    --blue-700: #1d4ed8;
+    --blue-50: #eff6ff;
+    --blue-100: #dbeafe;
+    --gray-50: #f5f7fa;
+    --gray-100: #eef1f5;
+    --gray-200: #e2e6ec;
+    --gray-400: #9aa3b0;
+    --gray-500: #6b7482;
+    --gray-700: #374151;
+    --gray-900: #111827;
+    --red-50: #fef2f2;
+    --red-600: #dc2626;
+    --green-600: #16a34a;
+    --radius: 10px;
+    --shadow: 0 1px 2px rgba(17, 24, 39, 0.05);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: var(--gray-50);
+    color: var(--gray-900);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  /* ── 顶栏 ── */
+  .topbar {
+    background: #fff;
+    border-bottom: 1px solid var(--gray-200);
+    padding: 0 24px;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+  .brand {
+    color: var(--blue-600);
+    font-weight: 700;
+    font-size: 14px;
+    text-decoration: none;
+  }
+  .topbar-right { display: flex; align-items: center; gap: 16px; color: var(--gray-500); font-size: 13px; }
+  .badge-offline {
+    background: var(--gray-100);
+    color: var(--gray-500);
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--gray-200);
+  }
+  /* ── 布局 ── */
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 24px 80px; }
+  .page-title { font-size: 26px; font-weight: 700; letter-spacing: 0.5px; }
+  .page-sub { color: var(--gray-500); margin: 6px 0 26px; font-size: 14px; }
+  .card {
+    background: #fff;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+  .notice {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    background: var(--blue-50);
+    border: 1px solid var(--blue-100);
+    color: var(--blue-700);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    font-size: 13px;
+    margin-bottom: 24px;
+  }
+  .notice a { color: var(--blue-600); font-weight: 600; }
+  /* ── 表单 ── */
+  .panel { padding: 20px 22px; margin-bottom: 28px; }
+  .panel h2 { font-size: 16px; margin-bottom: 14px; }
+  .create-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .input, .select {
+    border: 1px solid var(--gray-200);
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    background: #fff;
+    color: var(--gray-900);
+    outline: none;
+    transition: border-color .15s;
+  }
+  .input:focus, .select:focus, textarea:focus { border-color: var(--blue-600); }
+  .input-grow { flex: 1; min-width: 200px; }
+  .btn {
+    border: none;
+    border-radius: 8px;
+    padding: 9px 18px;
+    font-size: 14px;
+    font-family: inherit;
+    cursor: pointer;
+    background: var(--blue-600);
+    color: #fff;
+    transition: background .15s;
+    white-space: nowrap;
+  }
+  .btn:hover { background: var(--blue-700); }
+  .btn-ghost {
+    background: #fff;
+    color: var(--gray-700);
+    border: 1px solid var(--gray-200);
+  }
+  .btn-ghost:hover { background: var(--gray-50); }
+  .btn-danger { background: #fff; color: var(--red-600); border: 1px solid #fecaca; }
+  .btn-danger:hover { background: var(--red-50); }
+  .btn-sm { padding: 5px 10px; font-size: 12px; border-radius: 6px; }
+  /* ── 作品卡片 ── */
+  .section-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
+  .section-head h2 { font-size: 17px; }
+  .section-head span { color: var(--gray-400); font-size: 13px; }
+  .works-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+  .work-card {
+    padding: 18px;
+    cursor: pointer;
+    transition: border-color .15s, transform .15s;
+    position: relative;
+  }
+  .work-card:hover { border-color: var(--blue-600); transform: translateY(-1px); }
+  .work-title { font-size: 15px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .genre-tag {
+    background: var(--blue-50);
+    color: var(--blue-600);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .work-desc { color: var(--gray-500); font-size: 13px; margin: 8px 0 14px; min-height: 20px; }
+  .work-meta { color: var(--gray-400); font-size: 12px; display: flex; justify-content: space-between; align-items: center; }
+  .work-del { background: none; border: none; color: var(--gray-400); cursor: pointer; font-size: 12px; padding: 0; }
+  .work-del:hover { color: var(--red-600); }
+  /* ── 编辑器 ── */
+  .editor-layout { display: grid; grid-template-columns: 260px 1fr; gap: 16px; align-items: start; }
+  .chapter-list { padding: 14px; }
+  .chapter-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    margin-bottom: 4px;
+  }
+  .chapter-item:hover { background: var(--gray-50); }
+  .chapter-item.active { background: var(--blue-50); border-color: var(--blue-100); }
+  .chapter-name { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chapter-item.active .chapter-name { color: var(--blue-700); font-weight: 600; }
+  .chapter-words { color: var(--gray-400); font-size: 11px; white-space: nowrap; }
+  .ch-ops { display: none; gap: 2px; }
+  .chapter-item:hover .ch-ops, .chapter-item.active .ch-ops { display: flex; }
+  .icon-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--gray-400);
+    font-size: 12px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    line-height: 1;
+  }
+  .icon-btn:hover { background: var(--gray-200); color: var(--gray-700); }
+  .icon-btn.danger:hover { background: var(--red-50); color: var(--red-600); }
+  /* ── 编辑区 ── */
+  .editor-pane { padding: 0; overflow: hidden; }
+  .editor-head {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--gray-200);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .editor-head .input { font-weight: 700; flex: 1; min-width: 180px; }
+  .save-state { color: var(--gray-400); font-size: 12px; white-space: nowrap; }
+  .save-state.saved { color: var(--green-600); }
+  textarea.editor {
+    width: 100%;
+    min-height: 460px;
+    border: none;
+    outline: none;
+    resize: vertical;
+    padding: 18px;
+    font-size: 15px;
+    line-height: 1.9;
+    font-family: "Georgia", "Songti SC", "SimSun", serif;
+    color: var(--gray-900);
+    background: #fff;
+  }
+  .editor-foot {
+    padding: 10px 18px;
+    border-top: 1px solid var(--gray-200);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    background: #fcfcfd;
+  }
+  .word-count { color: var(--gray-500); font-size: 13px; }
+  .word-count b { color: var(--gray-900); font-size: 15px; }
+  /* ── 空状态 / 弹层 ── */
+  .empty { text-align: center; color: var(--gray-400); padding: 60px 20px; }
+  .empty h3 { color: var(--gray-700); font-size: 16px; margin-bottom: 8px; }
+  .modal-mask {
+    position: fixed; inset: 0;
+    background: rgba(17, 24, 39, 0.4);
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 50;
+  }
+  .modal-mask.show { display: flex; }
+  .modal { background: #fff; border-radius: 12px; padding: 22px; width: 320px; }
+  .modal h3 { font-size: 15px; margin-bottom: 10px; }
+  .modal p { color: var(--gray-500); font-size: 13px; margin-bottom: 16px; }
+  .modal-ops { display: flex; justify-content: flex-end; gap: 10px; }
+  .toast {
+    position: fixed;
+    bottom: 24px; left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--gray-900);
+    color: #fff;
+    padding: 9px 18px;
+    border-radius: 8px;
+    font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transition: all .25s;
+    z-index: 60;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .hidden { display: none !important; }
+  @media (max-width: 760px) {
+    .editor-layout { grid-template-columns: 1fr; }
+    textarea.editor { min-height: 340px; }
+    .wrap { padding: 20px 14px 60px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="https://github.com/yaohuai18/moyu-editor" target="_blank" rel="noopener">墨语编辑器</a>
+  <div class="topbar-right">
+    <span class="badge-offline">体验版 · 离线</span>
+    <span>数据仅存本机</span>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ═══ 视图一：作品列表 ═══ -->
+  <section id="view-works">
+    <h1 class="page-title">小说创作工作台</h1>
+    <p class="page-sub">体验版：章节管理与本地存稿。AI 诊断润色、版本历史、云端同步见完整版。</p>
+
+    <div class="notice">
+      <span>ⓘ</span>
+      <div>这是可离线运行的<strong>体验版</strong>，你的稿件只保存在本机浏览器里，不会被上传。
+        完整版（账号系统 / AI 诊断 / 版本历史）见
+        <a href="https://github.com/yaohuai18/moyu-editor" target="_blank" rel="noopener">GitHub 仓库</a>。</div>
+    </div>
+
+    <div class="card panel">
+      <h2>创建新作品</h2>
+      <div class="create-row">
+        <input class="input input-grow" id="work-title" placeholder="请输入作品名称" maxlength="60">
+        <select class="select" id="work-genre">
+          <option>都市</option><option>玄幻</option><option>科幻</option>
+          <option>悬疑</option><option>历史</option><option>言情</option><option>其他</option>
+        </select>
+        <button class="btn" id="btn-create-work">创建作品</button>
+      </div>
+    </div>
+
+    <div class="section-head">
+      <h2>我的作品</h2><span id="works-count"></span>
+    </div>
+    <div class="works-grid" id="works-grid"></div>
+    <div class="card empty hidden" id="works-empty">
+      <h3>还没有作品</h3>
+      <p>在上方输入名称，创建你的第一部作品。</p>
+    </div>
+  </section>
+
+  <!-- ═══ 视图二：编辑器 ═══ -->
+  <section id="view-editor" class="hidden">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:10px;">
+      <div>
+        <button class="btn-ghost btn btn-sm" id="btn-back">← 返回作品列表</button>
+        <span style="font-weight:700; font-size:16px; margin-left:10px;" id="editor-work-title"></span>
+        <span class="genre-tag" id="editor-work-genre"></span>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn-ghost btn btn-sm" id="btn-export-txt">导出整本 TXT</button>
+        <button class="btn-ghost btn btn-sm" id="btn-export-md">导出整本 Markdown</button>
+        <button class="btn-ghost btn btn-sm" id="btn-export-ch">导出本章 TXT</button>
+      </div>
+    </div>
+
+    <div class="editor-layout">
+      <aside>
+        <div class="card" style="padding:14px; margin-bottom:12px;">
+          <button class="btn" style="width:100%" id="btn-new-chapter">＋ 新建章节</button>
+        </div>
+        <div class="card chapter-list" id="chapter-list"></div>
+      </aside>
+
+      <div class="card editor-pane" id="editor-pane">
+        <div class="editor-head">
+          <input class="input" id="chapter-title" placeholder="章节标题" maxlength="80">
+          <span class="save-state" id="save-state"></span>
+        </div>
+        <textarea class="editor" id="chapter-content" placeholder="从这里开始写你的故事……（内容会自动保存到本机浏览器）"></textarea>
+        <div class="editor-foot">
+          <span class="word-count">字数 <b id="word-count">0</b></span>
+          <span style="color:var(--gray-400); font-size:12px;">自动保存 · 数据仅存本机浏览器</span>
+        </div>
+      </div>
+
+      <div class="card empty hidden" id="editor-empty" style="grid-column: 1 / -1;">
+        <h3>还没有章节</h3>
+        <p>点击左侧「＋ 新建章节」开始创作。</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- 删除确认弹层 -->
+<div class="modal-mask" id="modal-mask">
+  <div class="modal">
+    <h3 id="modal-title">确认删除</h3>
+    <p id="modal-text"></p>
+    <div class="modal-ops">
+      <button class="btn-ghost btn btn-sm" id="modal-cancel">取消</button>
+      <button class="btn btn-danger btn-sm" id="modal-ok">删除</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* ═══════════════════════════════════════════════════════
+   墨语编辑器 · 离线体验版
+   架构：单文件 vanilla JS，状态集中管理，localStorage 持久化。
+   刻意保持零依赖、零网络请求：可直接 file:// 打开。
+   ═══════════════════════════════════════════════════════ */
+
+var STORE_KEY = "moyu-offline-demo-v1";
+var $ = function (id) { return document.getElementById(id); };
+
+/* ── 状态 ── */
+var state = { works: [], currentWorkId: null, currentChapterId: null };
+var saveTimer = null, saveMarkTimer = null;
+
+/* ── 工具 ── */
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+function now() { return new Date().toISOString(); }
+
+function countWords(text) {
+  // 中文字符逐个计，连续英文/数字算一个词
+  var cjk = (text.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) || []).length;
+  var words = (text.replace(/[\u4e00-\u9fff\u3400-\u4dbf]/g, " ")
+                   .match(/[A-Za-z0-9_'-]+/g) || []).length;
+  return cjk + words;
+}
+
+/* Windows 保留名 / 非法字符清理（主项目技术债之一，体验版先做对） */
+var RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+function safeFileName(name) {
+  var n = String(name || "").replace(/[\\/:*?"<>|\r\n]/g, "_").trim();
+  if (RESERVED.test(n)) n = "_" + n;
+  return n || "未命名";
+}
+
+function toast(msg) {
+  var t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(t._timer);
+  t._timer = setTimeout(function () { t.classList.remove("show"); }, 1800);
+}
+
+/* ── 持久化（防抖 800ms）── */
+function persist(immediate) {
+  clearTimeout(saveTimer);
+  var doSave = function () {
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify({ version: 1, works: state.works }));
+    } catch (e) {
+      toast("保存失败：浏览器存储空间不足");
+    }
+  };
+  if (immediate) doSave(); else saveTimer = setTimeout(doSave, 800);
+}
+
+function load() {
+  try {
+    var raw = localStorage.getItem(STORE_KEY);
+    if (!raw) return false;
+    var data = JSON.parse(raw);
+    if (data && Array.isArray(data.works)) { state.works = data.works; return true; }
+  } catch (e) { /* 数据损坏则视为空库，重新初始化 */ }
+  return false;
+}
+
+/* ── 示例数据（仅首次打开时预置）── */
+function seed() {
+  state.works.push({
+    id: uid(), title: "示例作品：星海拾荒者", genre: "科幻",
+    desc: "预置的示例数据，可随意修改或删除，用于快速体验功能。",
+    createdAt: now(), updatedAt: now(),
+    chapters: [
+      { id: uid(), title: "第一章 破碎的轨道", updatedAt: now(),
+        content: "废铁在轨道上慢悠悠地翻滚，像一条搁浅的鲸。\n\n陈拾把磁靴调到最低档，让自己贴着货运舱的外壳滑行。头盔里传来老周的声音：「拾头，这一片是三十年前的战争残骸，运气好的话，能捡到完整的聚变电池。」\n\n「运气不好的话呢？」\n\n「运气不好的话，捡到的是没炸完的引信。」" },
+      { id: uid(), title: "第二章 三公斤的故乡", updatedAt: now(),
+        content: "（示例正文，替换成你自己的故事。）" }
+    ]
+  });
+  persist(true);
+}
+
+/* ── 数据操作 ── */
+function findWork(id) {
+  for (var i = 0; i < state.works.length; i++) if (state.works[i].id === id) return state.works[i];
+  return null;
+}
+function findChapter(work, id) {
+  for (var i = 0; i < work.chapters.length; i++) if (work.chapters[i].id === id) return work.chapters[i];
+  return null;
+}
+
+/* ── 视图切换 ── */
+function showWorks() {
+  state.currentWorkId = null;
+  state.currentChapterId = null;
+  $("view-works").classList.remove("hidden");
+  $("view-editor").classList.add("hidden");
+  renderWorks();
+}
+function showEditor(workId) {
+  var w = findWork(workId);
+  if (!w) return showWorks();
+  state.currentWorkId = workId;
+  state.currentChapterId = w.chapters.length ? w.chapters[0].id : null;
+  $("view-works").classList.add("hidden");
+  $("view-editor").classList.remove("hidden");
+  $("editor-work-title").textContent = w.title;
+  $("editor-work-genre").textContent = w.genre;
+  renderEditor();
+}
+
+/* ── 渲染：作品列表 ── */
+function renderWorks() {
+  var grid = $("works-grid");
+  grid.innerHTML = "";
+  $("works-count").textContent = state.works.length ? "共 " + state.works.length + " 部" : "";
+  $("works-empty").classList.toggle("hidden", state.works.length > 0);
+
+  state.works.forEach(function (w) {
+    var card = document.createElement("div");
+    card.className = "card work-card";
+    var desc = w.desc || "暂无作品简介";
+    card.innerHTML =
+      '<div class="work-title"><span class="wt"></span><span class="genre-tag"></span></div>' +
+      '<div class="work-desc"></div>' +
+      '<div class="work-meta"><span class="wm"></span><button class="work-del" title="删除作品">删除</button></div>';
+    card.querySelector(".wt").textContent = w.title;
+    card.querySelector(".genre-tag").textContent = w.genre;
+    card.querySelector(".work-desc").textContent = desc;
+    card.querySelector(".wm").textContent = w.chapters.length + " 个章节";
+    card.addEventListener("click", function (e) {
+      if (e.target.classList.contains("work-del")) return;
+      showEditor(w.id);
+    });
+    card.querySelector(".work-del").addEventListener("click", function () {
+      confirmModal("删除作品", "「" + w.title + "」及其全部章节将被删除，且无法恢复。确认删除？", function () {
+        state.works = state.works.filter(function (x) { return x.id !== w.id; });
+        persist(true); renderWorks(); toast("已删除");
+      });
+    });
+    grid.appendChild(card);
+  });
+}
+
+/* ── 渲染：编辑器 ── */
+function renderEditor() {
+  var w = findWork(state.currentWorkId);
+  if (!w) return showWorks();
+  var hasCh = state.currentChapterId && findChapter(w, state.currentChapterId);
+  if (!hasCh) state.currentChapterId = w.chapters.length ? w.chapters[0].id : null;
+
+  $("editor-pane").classList.toggle("hidden", !state.currentChapterId);
+  $("editor-empty").classList.toggle("hidden", !!state.currentChapterId);
+
+  /* 章节侧栏 */
+  var list = $("chapter-list");
+  list.innerHTML = "";
+  w.chapters.forEach(function (ch, idx) {
+    var item = document.createElement("div");
+    item.className = "chapter-item" + (ch.id === state.currentChapterId ? " active" : "");
+    item.innerHTML =
+      '<span class="chapter-name"></span><span class="chapter-words"></span>' +
+      '<span class="ch-ops">' +
+        '<button class="icon-btn" data-op="up" title="上移">↑</button>' +
+        '<button class="icon-btn" data-op="down" title="下移">↓</button>' +
+        '<button class="icon-btn danger" data-op="del" title="删除章节">✕</button>' +
+      '</span>';
+    item.querySelector(".chapter-name").textContent = (idx + 1) + ". " + ch.title;
+    item.querySelector(".chapter-words").textContent = countWords(ch.content) ? countWords(ch.content) + "字" : "";
+    item.addEventListener("click", function (e) {
+      var op = e.target.getAttribute && e.target.getAttribute("data-op");
+      if (op === "up" || op === "down") {
+        var j = op === "up" ? idx - 1 : idx + 1;
+        if (j < 0 || j >= w.chapters.length) return;
+        var t = w.chapters[idx]; w.chapters[idx] = w.chapters[j]; w.chapters[j] = t;
+        w.updatedAt = now(); persist(); renderEditor(); return;
+      }
+      if (op === "del") {
+        confirmModal("删除章节", "「" + ch.title + "」将被删除，且无法恢复。确认删除？", function () {
+          w.chapters.splice(idx, 1);
+          if (state.currentChapterId === ch.id) state.currentChapterId = w.chapters.length ? w.chapters[0].id : null;
+          w.updatedAt = now(); persist(true); renderEditor(); toast("章节已删除");
+        });
+        return;
+      }
+      state.currentChapterId = ch.id;
+      renderEditor();
+    });
+    list.appendChild(item);
+  });
+
+  /* 编辑区内容 */
+  var ch = state.currentChapterId ? findChapter(w, state.currentChapterId) : null;
+  if (ch) {
+    $("chapter-title").value = ch.title;
+    $("chapter-content").value = ch.content;
+    updateWordCount();
+    setSaveState("");
+  }
+}
+
+/* ── 编辑与自动保存 ── */
+function setSaveState(cls) {
+  var el = $("save-state");
+  el.className = "save-state " + (cls || "");
+  el.textContent = cls === "saved" ? "已保存 ✓" : cls === "saving" ? "保存中…" : "";
+}
+function updateWordCount() {
+  $("word-count").textContent = countWords($("chapter-content").value);
+}
+function onEdit() {
+  var w = findWork(state.currentWorkId);
+  if (!w) return;
+  var ch = findChapter(w, state.currentChapterId);
+  if (!ch) return;
+  ch.title = $("chapter-title").value;
+  ch.content = $("chapter-content").value;
+  ch.updatedAt = now(); w.updatedAt = now();
+  updateWordCount();
+  setSaveState("saving");
+  persist();
+  clearTimeout(saveMarkTimer);
+  saveMarkTimer = setTimeout(function () { setSaveState("saved"); }, 850);
+}
+
+/* ── 导出 ── */
+function download(name, content, mime) {
+  var blob = new Blob([content], { type: mime || "text/plain;charset=utf-8" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = safeFileName(name);
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 300);
+}
+function exportWholeBook(ext) {
+  var w = findWork(state.currentWorkId); if (!w) return;
+  if (!w.chapters.length) return toast("没有可导出的章节");
+  var out;
+  if (ext === "md") {
+    out = "# " + w.title + "\n\n> 类型：" + w.genre + "  \n> 导出时间：" +
+          new Date().toLocaleString("zh-CN") + "\n\n---\n\n";
+    w.chapters.forEach(function (ch, i) {
+      out += "## " + (i + 1) + ". " + ch.title + "\n\n" + (ch.content || "") + "\n\n";
+    });
+  } else {
+    out = w.title + "\n类型：" + w.genre + "\n导出时间：" + new Date().toLocaleString("zh-CN") + "\n\n";
+    w.chapters.forEach(function (ch, i) {
+      out += "════════ 第" + (i + 1) + "章 " + ch.title + " ════════\n\n" + (ch.content || "") + "\n\n";
+    });
+  }
+  download(w.title + "." + ext, out);
+  toast("已导出整本 " + ext.toUpperCase());
+}
+function exportChapter() {
+  var w = findWork(state.currentWorkId); if (!w) return;
+  var ch = state.currentChapterId ? findChapter(w, state.currentChapterId) : null;
+  if (!ch) return toast("没有可导出的章节");
+  download(w.title + "-" + ch.title + ".txt", ch.title + "\n\n" + (ch.content || ""));
+  toast("已导出本章 TXT");
+}
+
+/* ── 确认弹层 ── */
+var modalCb = null;
+function confirmModal(title, text, cb) {
+  $("modal-title").textContent = title;
+  $("modal-text").textContent = text;
+  modalCb = cb;
+  $("modal-mask").classList.add("show");
+}
+
+/* ── 事件绑定 ── */
+$("btn-create-work").addEventListener("click", function () {
+  var title = $("work-title").value.trim();
+  if (!title) return toast("请先输入作品名称");
+  state.works.unshift({
+    id: uid(), title: title, genre: $("work-genre").value, desc: "",
+    createdAt: now(), updatedAt: now(), chapters: []
+  });
+  $("work-title").value = "";
+  persist(true);
+  showEditor(state.works[0].id);
+  toast("已创建，开始添加章节吧");
+});
+$("work-title").addEventListener("keydown", function (e) {
+  if (e.key === "Enter") $("btn-create-work").click();
+});
+$("btn-back").addEventListener("click", showWorks);
+$("btn-new-chapter").addEventListener("click", function () {
+  var w = findWork(state.currentWorkId); if (!w) return;
+  var ch = { id: uid(), title: "第" + (w.chapters.length + 1) + "章", content: "", updatedAt: now() };
+  w.chapters.push(ch);
+  state.currentChapterId = ch.id;
+  w.updatedAt = now(); persist(true); renderEditor();
+  $("chapter-title").focus(); $("chapter-title").select();
+});
+$("chapter-title").addEventListener("input", onEdit);
+$("chapter-content").addEventListener("input", onEdit);
+$("btn-export-txt").addEventListener("click", function () { exportWholeBook("txt"); });
+$("btn-export-md").addEventListener("click", function () { exportWholeBook("md"); });
+$("btn-export-ch").addEventListener("click", exportChapter);
+$("modal-cancel").addEventListener("click", function () { $("modal-mask").classList.remove("show"); modalCb = null; });
+$("modal-ok").addEventListener("click", function () {
+  $("modal-mask").classList.remove("show");
+  if (modalCb) { var cb = modalCb; modalCb = null; cb(); }
+});
+$("modal-mask").addEventListener("click", function (e) {
+  if (e.target === $("modal-mask")) { $("modal-mask").classList.remove("show"); modalCb = null; }
+});
+
+/* ── 启动 ── */
+if (!load()) seed();
+showWorks();
+</script>
+</body>
+</html>
