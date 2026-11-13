@@ -61,10 +61,10 @@ Next.js 16.4.6 · React 19.2.8 · Prisma 6.19 · SQLite · bcryptjs · next-auth
 
 | 档 | 数量 | 核验时间 | 复核方式 |
 |---|---|---|---|
-| unit | **94 / 94 passed**（8 文件） | 2026-11-13 实测 | `npm.cmd run test` |
+| unit | **96 / 96 passed**（8 文件） | 2026-11-13 实测 | `npm.cmd run test` |
 | api | **87 / 87** | 2026-11-13 实测 | `npm.cmd run build` 后 `npm.cmd run test:api` |
 
-> 注：本项目 AGENTS.md 早前写的是 `unit 88、api 81`，已过期，现按实测改为 94 / 87。
+> 注：本项目 AGENTS.md 早前写的是 `unit 88、api 81`，已过期，现按实测改为 96 / 87。
 
 ## 五、禁止改动
 
@@ -133,7 +133,7 @@ Next.js 16.4.6 · React 19.2.8 · Prisma 6.19 · SQLite · bcryptjs · next-auth
 
 | 事实 | 当前值（核验日期） | 复核方式 |
 |---|---|---|
-| 测试数量 | unit 94 / api 87（2026-11-13 实测） | `npm.cmd run test`；api 需先 build |
+| 测试数量 | unit 96 / api 87（2026-11-13 实测） | `npm.cmd run test`；api 需先 build |
 | 最新提交 | 以 `git log -1` 为准（2026-11-13 复查；勿抄旧哈希） | `git log -1 --oneline`、`git status` |
 | 版本号 | `1.0.0-rc.2` | `package.json` |
 | 仓库公开 | 两者匿名 200（2026-10-27） | `curl -I` |
