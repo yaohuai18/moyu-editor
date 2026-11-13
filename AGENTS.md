@@ -16,7 +16,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 >
 > **本文件是本项目的唯一项目规则真源。** 全局 `C:\Users\牛\.dsh\AGENTS.md` 第四节只保留一行索引。
 >
-> 最后核验：**2026-10-27**。带 ★ 的条目属于易过期事实，使用前按下文「十、易过期事实与复核方式」实测，不得直接当现状。
+> 最后核验：**2026-11-13**。带 ★ 的条目属于易过期事实，使用前按下文「十、易过期事实与复核方式」实测，不得直接当现状。
 
 ## 一、定位与路径
 
@@ -27,7 +27,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## 二、技术栈 ★（2026-10-27 核对 `package.json`）
 
-Next.js 16.3.6 · React 19.2.8 · Prisma 6.19 · SQLite · bcryptjs · next-auth v5 beta · zod 4 · Tailwind 4 · Vitest 5。包管理器 npm，Node.js v22.22.2。
+Next.js 16.4.6 · React 19.2.8 · Prisma 6.19 · SQLite · bcryptjs · next-auth v5 beta · zod 4.6.7 · Tailwind 4 · Vitest 5。包管理器 npm，Node.js v24.19.0。
 
 ## 三、启动 / 构建 / 测试
 
@@ -61,14 +61,14 @@ Next.js 16.3.6 · React 19.2.8 · Prisma 6.19 · SQLite · bcryptjs · next-auth
 
 | 档 | 数量 | 核验时间 | 复核方式 |
 |---|---|---|---|
-| unit | **91 / 91 passed**（8 文件） | 2026-10-27 15:54 实测 | `npm.cmd run test` |
-| api | **83 / 83** | 2026-10-24 记录，**本会话未复测** | `npm.cmd run build` 后 `npm.cmd run test:api` |
+| unit | **94 / 94 passed**（8 文件） | 2026-11-13 实测 | `npm.cmd run test` |
+| api | **87 / 87** | 2026-11-13 实测 | `npm.cmd run build` 后 `npm.cmd run test:api` |
 
-> 注：本项目 AGENTS.md 早前写的是 `unit 88、api 81`，已过期，现按实测改为 91 / 83。
+> 注：本项目 AGENTS.md 早前写的是 `unit 88、api 81`，已过期，现按实测改为 94 / 87。
 
 ## 五、禁止改动
 
-- `node_modules/`、`.next/`、`_p9/`、`_p10/`、`_p11/`、`backups/`、`ops-reports/`：生成物或历史验收产物。
+- `node_modules/`、`.next/`、`backups/`、`ops-reports/`：生成物或历史验收产物（原 `_p9/`-`_p11/` 阶段产物已于 2026-11-13 清理移出）。
 - `.env*`、`prisma/*.db*`：含真实数据与密钥，不进 Git、不删不改。
 - 演示账号 `demo@moyu.local` 只在上线前统一处理，平时不要动。
 
@@ -109,16 +109,17 @@ Next.js 16.3.6 · React 19.2.8 · Prisma 6.19 · SQLite · bcryptjs · next-auth
 
 没拆之前不许对外宣称「可以上线」：
 
-1. **作废已泄露的 DeepSeek AI Key**；
-2. **更换 `AUTH_SECRET`**；
-3. **处理演示账号 `demo@moyu.local`**。
+1. **作废已泄露的 DeepSeek AI Key**（代码层已堵住落盘面；DeepSeek 控制台作废换新待老板操作——暂按保留使用，对外部署前必须换）；
+2. **更换 `AUTH_SECRET`**（待老板操作：`.env` 里一行替换，生成命令见 `.env.example`）；
+3. **处理演示账号 `demo@moyu.local`**（✅ 2026-11-13 已把旧公开密码作废为随机未知值，实测旧密码登录被拒；需要时设 `DEMO_USER_PASSWORD` 重跑 seed 即可换新）。
 
-## 九、已知技术债（未修，改到这里时一并考虑）
+## 九、已知技术债（改到这里时一并考虑）
 
-- `saveNow` 没有 in-flight 去重 → 并发保存会出现假 409；
+- ~~`saveNow` 没有 in-flight 去重 → 并发保存会出现假 409~~ **已修**（2026-11-13：客户端 in-flight 去重 + 服务端原子乐观锁配套，真并发测试覆盖）；
 - 导出文件名未处理 Windows 保留名（`CON` / `PRN` / `COM1` 等）；
 - 导出未处理孤立 `\r`；
-- 调序接口零测试覆盖。
+- 调序接口零测试覆盖；
+- npm audit 剩余 3 high / 9 moderate 全在开发工具链（prisma CLI 依赖链的 deepmerge-ts、vitest/mocker、minimatch），修复需 Prisma 6→7 大版本升级，待定。
 
 **已修但设计决策要保留（别改回去）**——2026-10-27 commit `a90098e`：
 
@@ -132,11 +133,11 @@ Next.js 16.3.6 · React 19.2.8 · Prisma 6.19 · SQLite · bcryptjs · next-auth
 
 | 事实 | 当前值（核验日期） | 复核方式 |
 |---|---|---|
-| 测试数量 | unit 91 / api 83（2026-10-27 / 2026-10-24） | `npm.cmd run test`；api 需先 build |
-| 最新提交 | `a90098e`（2026-10-27，main，工作树干净） | `git log -1 --oneline`、`git status` |
+| 测试数量 | unit 94 / api 87（2026-11-13 实测） | `npm.cmd run test`；api 需先 build |
+| 最新提交 | 以 `git log -1` 为准（2026-11-13 复查；勿抄旧哈希） | `git log -1 --oneline`、`git status` |
 | 版本号 | `1.0.0-rc.2` | `package.json` |
 | 仓库公开 | 两者匿名 200（2026-10-27） | `curl -I` |
-| 远端协议 | origin=SSH、gitee=HTTPS（2026-10-27） | `git remote -v` |
+| 远端协议 | origin=SSH（2026-11-13 实测连接被拒，推送改用 HTTPS 一次性）、gitee=HTTPS | `git remote -v` |
 | 网络可达 | 2026-10-26 曾 github/api/codeload/gitee 全通 | HEAD 请求目标域名 |
 
 超过 30 天未复核的记录，不得作为当前状态引用。
