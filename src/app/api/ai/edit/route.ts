@@ -185,7 +185,12 @@ export async function POST(request: NextRequest) {
             description: true,
             genre: true,
             styleProfile: {
-              select: { tone: true, viewpoint: true, sentenceStyle: true },
+              select: {
+                tone: true,
+                viewpoint: true,
+                sentenceStyle: true,
+                forbiddenWords: true,
+              },
             },
           },
         },
@@ -245,6 +250,7 @@ export async function POST(request: NextRequest) {
         tone: chapter.project.styleProfile?.tone,
         viewpoint: chapter.project.styleProfile?.viewpoint,
         sentenceStyle: chapter.project.styleProfile?.sentenceStyle,
+        forbiddenWords: chapter.project.styleProfile?.forbiddenWords,
       });
 
       // 记用量。故意放在返回之前而不是 await 之后忘掉：

@@ -39,6 +39,8 @@ export type AiEditInput = {
   tone?: string | null;
   viewpoint?: string | null;
   sentenceStyle?: string | null;
+  /** 风格档案里的禁用词（如「不由得、心中一震」），会写进提示词让模型避开 */
+  forbiddenWords?: string | null;
 };
 
 export type AiDiagnoseIssue = {
@@ -136,6 +138,8 @@ function buildStyleContext(input: AiEditInput) {
     input.tone && `语气：${input.tone}`,
     input.viewpoint && `叙事视角：${input.viewpoint}`,
     input.sentenceStyle && `句式风格：${input.sentenceStyle}`,
+    input.forbiddenWords &&
+      `禁用词（除非剧情必须，尽量不用）：${input.forbiddenWords}`,
   ].filter(Boolean);
 
   return lines.length ? lines.join("\n") : "（作者尚未填写作品信息）";

@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { AiError, describeAiError } from "@/lib/ai";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AiError, describeAiError, runAiEdit } from "@/lib/ai";
 
 /**
  * AI 错误翻译。
@@ -56,5 +56,90 @@ describe("describeAiError", () => {
     expect(messages).not.toContain("sk-must-never-appear");
 
     delete process.env.AI_API_KEY;
+  });
+});
+
+describe("runAiEdit 提示词组装", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.AI_API_KEY;
+    delete process.env.AI_MODEL;
+  });
+
+  /** 起一个假上游：返回合法 JSON，并记录收到的请求体 */
+  function stubProvider() {
+    const fetchMock = vi.fn(
+      async (_input: string | URL | Request, init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    revisedText: "改好的正文。",
+                    changes: ["说明一条"],
+                  }),
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    return fetchMock;
+  }
+
+  it("风格档案里的禁用词会写进发给模型的提示词", async () => {
+    process.env.AI_API_KEY = "sk-test";
+    process.env.AI_MODEL = "deepseek-chat";
+
+    const fetchMock = stubProvider();
+
+    const result = await runAiEdit({
+      content: "原文。",
+      mode: "polish",
+      projectTitle: "测试书",
+      forbiddenWords: "不由得、心中一震",
+    });
+
+    expect(result.mode).toBe("polish");
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+
+    expect(init?.body).toBeTruthy();
+
+    const sent = JSON.parse(init?.body as string);
+    const userPrompt = sent.messages.find(
+      (m: { role: string }) => m.role === "user"
+    ).content;
+
+    expect(userPrompt).toContain("禁用词");
+    expect(userPrompt).toContain("不由得、心中一震");
+  });
+
+  it("没填禁用词时，提示词里不出现禁用词段", async () => {
+    process.env.AI_API_KEY = "sk-test";
+    process.env.AI_MODEL = "deepseek-chat";
+
+    const fetchMock = stubProvider();
+
+    await runAiEdit({
+      content: "原文。",
+      mode: "polish",
+    });
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+
+    expect(init?.body).toBeTruthy();
+
+    const sent = JSON.parse(init?.body as string);
+    const userPrompt = sent.messages.find(
+      (m: { role: string }) => m.role === "user"
+    ).content;
+
+    expect(userPrompt).not.toContain("禁用词");
   });
 });

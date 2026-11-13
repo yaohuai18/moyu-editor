@@ -1693,7 +1693,7 @@ export default function EditorClient({
               去作品设置里改 →
             </Link>
             <p className="mt-1 text-xs text-slate-500">
-              禁用词暂未开放编辑，排在后面的阶段。
+              禁用词已接入 AI（诊断与润色会尽量避开这些词）；编辑功能排在后面的阶段。
             </p>
           </section>
 
