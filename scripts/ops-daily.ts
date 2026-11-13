@@ -16,8 +16,8 @@
  *   （比如晚上在开发机上看一眼数据）。没启动就明确标出来，跳过应用侧检查，
  *   数据库和台账照查，退出码保持 0。「服务该开而没开」由部署平台报警，不归这里管。
  *
- * - **探测账号从 .env 读**（`OPS_EMAIL` / `OPS_PASSWORD`），没配时用演示账号。
- *   上线删演示账号前记得配一个专用账号，否则第 4、5 项会变成「提醒」。
+ * - **探测账号从 .env 读**（`OPS_EMAIL` / `OPS_PASSWORD`），没配时跳过登录探测。
+ *   不再回退到演示账号：那个账号的密码公开过，拿它当探测账号等于把巡检变成撞库。
  */
 
 import { loadEffectiveEnv } from "./env-file";
@@ -44,13 +44,16 @@ function resolveBaseUrl(env: Record<string, string>) {
 async function main() {
   const { env } = loadEffectiveEnv(process.cwd());
   const baseUrl = resolveBaseUrl(env);
-  const probeEmail = env.OPS_EMAIL?.trim() || "demo@moyu.local";
-  const probePassword = env.OPS_PASSWORD?.trim() || "moyu-demo-2026";
-  const usingDefaultProbe = !env.OPS_EMAIL?.trim();
+  const probeEmail = env.OPS_EMAIL?.trim() || "";
+  const probePassword = env.OPS_PASSWORD?.trim() || "";
+  // 不再回退到演示账号：那个账号的密码公开过，拿它当探测账号等于把巡检变成撞库
+  const hasProbeAccount = Boolean(probeEmail && probePassword);
 
   const report = new Report(
     "墨语编辑器 · 日常巡检",
-    `目标：${baseUrl}（探测账号：${probeEmail}${usingDefaultProbe ? "，默认演示账号" : ""}）`
+    `目标：${baseUrl}（${
+      hasProbeAccount ? `探测账号：${probeEmail}` : "未配置探测账号，登录后的检查会跳过"
+    }）`
   );
 
   // ── 1. 应用在不在 ─────────────────────────────────────────────
@@ -115,41 +118,46 @@ async function main() {
     // ── 4. 登录 / 退出 ─────────────────────────────────────────
     report.head("4. 登录 / 退出");
 
-    try {
-      loggedIn = await client.login(probeEmail, probePassword);
-    } catch {
-      loggedIn = false;
-    }
-
-    if (loggedIn) {
-      report.ok("探测账号登录成功", probeEmail);
-
-      await client.logout();
-
-      const after = await client.json<{ user?: unknown }>("/api/auth/session");
-
-      if (after.body?.user) {
-        report.fail("退出登录后仍有会话", "logout 之后 /api/auth/session 还报用户");
-      } else {
-        report.ok("退出登录生效");
+    if (!hasProbeAccount) {
+      report.skip(
+        "跳过登录探测",
+        "未配置 OPS_EMAIL / OPS_PASSWORD，脚本不再回退到演示账号"
+      );
+    } else {
+      try {
+        loggedIn = await client.login(probeEmail, probePassword);
+      } catch {
+        loggedIn = false;
       }
 
-      // 登出后再登录回来，供后面两节用（免得每节都重登一遍）
-      loggedIn = await client.login(probeEmail, probePassword);
-    } else {
-      report.warn(
-        "探测账号登录失败",
-        usingDefaultProbe
-          ? "默认用演示账号，可能已被删除或改密。上线前请在 .env 配 OPS_EMAIL / OPS_PASSWORD 为专用探测账号"
-          : "请检查 .env 里 OPS_EMAIL / OPS_PASSWORD 是否正确"
-      );
+      if (loggedIn) {
+        report.ok("探测账号登录成功", probeEmail);
+
+        await client.logout();
+
+        const after = await client.json<{ user?: unknown }>("/api/auth/session");
+
+        if (after.body?.user) {
+          report.fail("退出登录后仍有会话", "logout 之后 /api/auth/session 还报用户");
+        } else {
+          report.ok("退出登录生效");
+        }
+
+        // 登出后再登录回来，供后面两节用（免得每节都重登一遍）
+        loggedIn = await client.login(probeEmail, probePassword);
+      } else {
+        report.warn(
+          "探测账号登录失败",
+          "请检查 .env 里 OPS_EMAIL / OPS_PASSWORD 是否正确、账号是否还在"
+        );
+      }
     }
 
     // ── 5. 保存链路只读探针 ────────────────────────────────────
     report.head("5. 保存链路（只读）");
 
     if (!loggedIn) {
-      report.skip("跳过", "上一节探测账号没登上");
+      report.skip("跳过", "未配置 OPS_EMAIL / OPS_PASSWORD（探测账号），登录后的检查全部跳过");
     } else {
       const projects = await client.json<{
         items?: { id: string; title: string; chapterCount?: number }[];

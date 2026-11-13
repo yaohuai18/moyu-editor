@@ -16,12 +16,20 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { randomBytes } from "node:crypto";
 import { loadEffectiveEnv, resolveSqlitePath } from "./env-file";
 
 const ROOT = process.cwd();
 const DRILL_DIR = path.join(ROOT, "_p9");
 const DRILL_EMAIL = "drill@moyu.local";
-const DRILL_PASSWORD = "drill-password-2026";
+/**
+ * 演练账号密码：每次运行随机生成，不写死。
+ *
+ * 旧版把它写成固定字符串（已从仓库移除）。一旦演练中断、清理没跑到，
+ * 库里就留下一个「邮箱公开 + 密码也公开」的账号 —— 等于后门。
+ * 随机密码让残留账号也登不进去。
+ */
+const DRILL_PASSWORD = randomBytes(24).toString("base64url");
 
 type Check = { label: string; ok: boolean; detail?: string };
 
@@ -64,6 +72,16 @@ async function main() {
     console.log("\n当前连的不是本地 SQLite（看起来是托管数据库）。");
     console.log("托管数据库的恢复演练请用供应商的「恢复到新实例」功能，");
     console.log("或者手动：pg_restore -d <另一个新库> backup.dump，再核对数据。");
+    return;
+  }
+
+  // 生产防线要认「真正生效」的 NODE_ENV。loadEffectiveEnv 已经把进程环境变量
+  // 和 .env 系列文件合并好了（进程优先），所以直接读 env 就能两边都覆盖 ——
+  // Windows 上通常没设进程环境变量，只认 process.env 会把 .env 里的
+  // NODE_ENV=production 漏掉，防线形同虚设。
+  if (env.NODE_ENV === "production") {
+    record("拒绝在生产环境跑演练", false, "NODE_ENV=production，演练会往库里写测试数据");
+    process.exitCode = 1;
     return;
   }
 
