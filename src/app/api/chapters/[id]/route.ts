@@ -6,7 +6,6 @@ import {
   requireUser,
 } from "@/lib/require-user";
 import { countWords } from "@/lib/wordCount";
-import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { API_ERROR_CODES, logError, logRouteError } from "@/lib/log";
 
@@ -95,35 +94,21 @@ export async function PATCH(
     }
 
     /**
-     * 乐观锁检查。
+     * 乐观锁（原子版）。
      *
      * 场景：同一个章节在两个标签页（或两台设备）里都打开了，
      * 右边那个先保存，左边这个拿着旧内容再保存一次 —— 结果右边写的字全没了。
-     * 有了版本号就能挡住：左边提交的 version 已经过期，直接 409。
      *
-     * 注意这里**不合并、不覆盖**：我们不知道用户想留哪一份，
-     * 所以把当前版本号回给前端，让用户自己刷新看清楚了再决定。
+     * 旧写法是「先查版本 → 比一比 → 再 UPDATE」，检查与写入之间有空档：
+     * 两个并发请求都能通过检查，后写的静默覆盖先写的，版本号形同虚设。
+     * 现在把版本条件直接写进 UPDATE 的 where 里，由数据库保证同一版本
+     * 只有一个请求能写成功，另一个拿到 0 行受影响，按 409 处理。
+     *
+     * 不传 version 的调用方（脚本、旧客户端）跳过版本条件，行为与以前一致。
+     * 冲突时**不合并、不覆盖**：把当前版本号回给前端，让用户自己决定。
      */
-    if (data.version !== undefined && data.version !== chapter.version) {
-      logError("VERSION_CONFLICT", {
-        userId: user.id,
-        chapterId: id,
-        projectId: chapter.projectId,
-        status: 409,
-        detail: `client=${data.version} server=${chapter.version}`,
-      });
 
-      return NextResponse.json(
-        {
-          error: "内容已被更新，请刷新后确认是否合并修改",
-          code: API_ERROR_CODES.conflict,
-          version: chapter.version,
-        },
-        { status: 409 }
-      );
-    }
-
-    const update: Prisma.ChapterUpdateInput = {};
+    const update: { title?: string; content?: string; wordCount?: number } = {};
 
     if (data.title !== undefined) {
       update.title = data.title;
@@ -138,17 +123,27 @@ export async function PATCH(
       return NextResponse.json({ error: "没有要更新的内容" }, { status: 400 });
     }
 
+    const expectedVersion = data.version;
     const nextContent = update.content ?? chapter.content;
 
-    const updatedChapter = await prisma.$transaction(async (tx) => {
-      const updated = await tx.chapter.update({
-        where: { id },
+    const outcome = await prisma.$transaction(async (tx) => {
+      // 条件更新：只有库里版本还等于客户端看到的版本时才写得进去。
+      // 这一步是乐观锁真正生效的地方，不能挪到事务外面。
+      const claimed = await tx.chapter.updateMany({
+        where: expectedVersion === undefined ? { id } : { id, version: expectedVersion },
         data: {
           ...update,
-          // 版本号只在真的写入时前进（上面已确认过没有冲突）
+          // 版本号只在真的写入时前进
           version: { increment: 1 },
         },
       });
+
+      if (claimed.count === 0) {
+        // 没抢到这一版：别人先写了，整个事务不做任何改动
+        return { ok: false as const };
+      }
+
+      const updated = await tx.chapter.findUniqueOrThrow({ where: { id } });
 
       // 每次保存都留档：正文改动就是历史版本。
       // userId 记的是当前登录用户，登录系统上线前这里是演示用户。
@@ -171,10 +166,42 @@ export async function PATCH(
         data: { updatedAt: new Date() },
       });
 
-      return updated;
+      return { ok: true as const, chapter: updated };
     });
 
-    return NextResponse.json(updatedChapter);
+    if (!outcome.ok) {
+      // 冲突时读一下服务器当前版本，回给前端让它带着新版本号重试或合并
+      const current = await prisma.chapter.findUnique({
+        where: { id },
+        select: { version: true },
+      });
+
+      // 章节在访问检查之后被另一个标签页删掉了——这不是并发冲突，
+      // 返回 404 而不是 409：客户端把 409 当「内容冲突」锁住编辑器，
+      // 但这里应该让用户知道章节已经不存在。
+      if (!current) {
+        return NextResponse.json({ error: "章节不存在" }, { status: 404 });
+      }
+
+      logError("VERSION_CONFLICT", {
+        userId: user.id,
+        chapterId: id,
+        projectId: chapter.projectId,
+        status: 409,
+        detail: `client=${expectedVersion} server=${current.version}`,
+      });
+
+      return NextResponse.json(
+        {
+          error: "内容已被更新，请刷新后确认是否合并修改",
+          code: API_ERROR_CODES.conflict,
+          version: current.version,
+        },
+        { status: 409 }
+      );
+    }
+
+    return NextResponse.json(outcome.chapter);
   } catch (error) {
     const unauthorized = authFailureResponse(error);
 

@@ -170,6 +170,10 @@ export default function EditorClient({
    */
   const versionRef = useRef(0);
   const conflictRef = useRef(false);
+  /** 是否有一个保存请求正在飞行（防重叠保存，见 saveNow 开头的说明） */
+  const saveInFlightRef = useRef(false);
+  /** 飞行期间是否又积压了新改动，飞行结束后自动补存一次 */
+  const pendingSaveRef = useRef(false);
 
   // 同步动作必须放在 effect 里：**在渲染期间写 ref 是禁止的**
   // （React 编译器靠「渲染是纯的」做优化，渲染期改 ref 会让它算错；
@@ -342,6 +346,14 @@ export default function EditorClient({
       return false;
     }
 
+    // 一次只允许一个保存在飞。原子乐观锁下，同一客户端重叠发两次保存，
+    // 后到的那次必然 409（版本号已经变了）——用户只是打字快了点，
+    // 不该被锁进「冲突未解决」。飞行中的这次结束后会自动补存最新内容。
+    if (saveInFlightRef.current) {
+      pendingSaveRef.current = true;
+      return true;
+    }
+
     const nextTitle = titleRef.current;
     const nextContent = contentRef.current;
 
@@ -352,6 +364,7 @@ export default function EditorClient({
       return true;
     }
 
+    saveInFlightRef.current = true;
     setSaveStatus("saving");
 
     try {
@@ -376,6 +389,9 @@ export default function EditorClient({
         setPanelNotice(
           data.error || "内容已被更新，请刷新后确认是否合并修改"
         );
+
+        // 冲突状态下补存毫无意义（必然还是 409），清掉补存标志
+        pendingSaveRef.current = false;
 
         return false;
       }
@@ -421,6 +437,14 @@ export default function EditorClient({
     } catch {
       setSaveStatus("error");
       return false;
+    } finally {
+      saveInFlightRef.current = false;
+
+      // 飞行期间又积压了新改动（用户一直在打字）：立刻补存一次。
+      if (pendingSaveRef.current) {
+        pendingSaveRef.current = false;
+        void saveNow();
+      }
     }
   }, []);
 

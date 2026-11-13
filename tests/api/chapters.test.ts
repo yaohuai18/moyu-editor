@@ -176,6 +176,67 @@ describe("并发保存冲突", () => {
 
     expect(response.status).toBe(200);
   });
+
+  it("真正的并发：同时拿同一个版本号保存，只有一个成功，另一个 409，没有 500", async () => {
+    const before = await author.json<{ version: number }>(
+      `/api/chapters/${chapterId}`
+    );
+
+    // 两个请求同时发出（不是先来后到），都拿着同一个「看到的版本号」。
+    // 原子乐观锁必须保证：恰好一个 200，另一个 409，绝不能出现 500
+    //（SQLite 写锁竞争被正确排队而不是直接崩）或者两个都 200（静默覆盖）。
+    const [left, right] = await Promise.all([
+      author.patch(`/api/chapters/${chapterId}`, {
+        content: "并发请求 A 写的内容。",
+        version: before.body.version,
+      }),
+      author.patch(`/api/chapters/${chapterId}`, {
+        content: "并发请求 B 写的内容。",
+        version: before.body.version,
+      }),
+    ]);
+
+    const statuses = [left.status, right.status].sort((a, b) => a - b);
+
+    expect(
+      statuses,
+      `两个并发保存应是一个 200 一个 409，实际 ${left.status} / ${right.status}`
+    ).toEqual([200, 409]);
+
+    const winner = left.status === 200 ? left : right;
+
+    const now = await author.json<{ content: string; version: number }>(
+      `/api/chapters/${chapterId}`
+    );
+
+    // 最终落库的是赢家那一份，版本号只前进 1（没有两次都写进去）
+    expect(now.body.content).toBe(winner.body.content);
+    expect(now.body.version).toBe(before.body.version + 1);
+  });
+
+  it("章节被删后，拿旧版本号保存返回 404 而不是 409", async () => {
+    const tempProject = await createProject(author, "第九阶段删后保存");
+
+    try {
+      const chapter = await createChapter(author, tempProject, "即将被删的章");
+      const before = await author.json<{ version: number }>(
+        `/api/chapters/${chapter}`
+      );
+
+      expect((await author.del(`/api/chapters/${chapter}`)).status).toBe(200);
+
+      // 409 会触发客户端「内容冲突」锁定；章节都没了，应该明确报 404
+      expectFailure(
+        await author.patch(`/api/chapters/${chapter}`, {
+          content: "章节都没了还保存什么",
+          version: before.body.version,
+        }),
+        404
+      );
+    } finally {
+      await deleteProjectQuietly(author, tempProject);
+    }
+  });
 });
 
 describe("删除章节", () => {
