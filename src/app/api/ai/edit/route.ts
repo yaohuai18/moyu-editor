@@ -10,7 +10,13 @@ import {
   describeAiError,
   runAiEdit,
 } from "@/lib/ai";
-import { countTodayUsage, DAILY_AI_LIMIT, recordAiFailure, recordAiUsage } from "@/lib/ai-usage";
+import {
+  DAILY_AI_LIMIT,
+  recordAiFailure,
+  recordAiUsage,
+  releaseQuotaReservation,
+  tryReserveQuota,
+} from "@/lib/ai-usage";
 import { API_ERROR_CODES, classifyError, logError, safeErrorDetail } from "@/lib/log";
 
 /**
@@ -194,14 +200,15 @@ export async function POST(request: NextRequest) {
     }
 
     // 每日额度：放在归属校验之后（不该为别人的章节消耗自己的额度判断），
-    // 也在真正花钱之前。
-    const usedToday = await countTodayUsage(user.id);
+    // 也在真正花钱之前。tryReserveQuota 把「飞行中的调用」也算进额度 ——
+    // 先同步占位、再数账，并发请求不可能同时通过额度检查。
+    const quota = await tryReserveQuota(user.id);
 
-    if (usedToday >= DAILY_AI_LIMIT) {
+    if (!quota.allowed) {
       logError("DAILY_QUOTA_EXCEEDED", {
         userId: user.id,
         status: 429,
-        detail: `used=${usedToday}/${DAILY_AI_LIMIT}`,
+        detail: `used=${quota.used}/${DAILY_AI_LIMIT}`,
       });
 
       // 同样落台账（每分钟最多一条），用来在报表里看出「额度不够用」的用户
@@ -221,46 +228,50 @@ export async function POST(request: NextRequest) {
         {
           error: `今日 AI 使用次数已达上限（${DAILY_AI_LIMIT} 次），明天 0 点后恢复`,
           code: API_ERROR_CODES.quota,
-          used: usedToday,
+          used: quota.used,
           limit: DAILY_AI_LIMIT,
         },
         { status: 429 }
       );
     }
 
-    const result = await runAiEdit({
-      content: data.content,
-      mode: data.mode,
-      projectTitle: chapter.project.title,
-      projectDescription: chapter.project.description,
-      genre: chapter.project.genre,
-      tone: chapter.project.styleProfile?.tone,
-      viewpoint: chapter.project.styleProfile?.viewpoint,
-      sentenceStyle: chapter.project.styleProfile?.sentenceStyle,
-    });
+    try {
+      const result = await runAiEdit({
+        content: data.content,
+        mode: data.mode,
+        projectTitle: chapter.project.title,
+        projectDescription: chapter.project.description,
+        genre: chapter.project.genre,
+        tone: chapter.project.styleProfile?.tone,
+        viewpoint: chapter.project.styleProfile?.viewpoint,
+        sentenceStyle: chapter.project.styleProfile?.sentenceStyle,
+      });
 
-    // 记用量。故意放在返回之前而不是 await 之后忘掉：
-    // recordAiUsage 内部自己吞异常，绝不会因为记账失败把结果弄丢。
-    await recordAiUsage({
-      userId: user.id,
-      projectId: data.projectId,
-      chapterId: data.chapterId,
-      mode: data.mode,
-      model: currentModel(),
-      inputChars: data.content.length,
-      outputChars: measureOutput(result),
-      durationMs: Date.now() - startedAt,
-    });
+      // 记用量。故意放在返回之前而不是 await 之后忘掉：
+      // recordAiUsage 内部自己吞异常，绝不会因为记账失败把结果弄丢。
+      await recordAiUsage({
+        userId: user.id,
+        projectId: data.projectId,
+        chapterId: data.chapterId,
+        mode: data.mode,
+        model: currentModel(),
+        inputChars: data.content.length,
+        outputChars: measureOutput(result),
+        durationMs: Date.now() - startedAt,
+      });
 
-    return NextResponse.json({
-      ...result,
-      usage: {
-        used: usedToday + 1,
-        limit: DAILY_AI_LIMIT,
-        remaining: Math.max(0, DAILY_AI_LIMIT - usedToday - 1),
-      },
-      durationMs: Date.now() - startedAt,
-    });
+      return NextResponse.json({
+        ...result,
+        usage: {
+          used: quota.used + 1,
+          limit: DAILY_AI_LIMIT,
+          remaining: Math.max(0, DAILY_AI_LIMIT - quota.used - 1),
+        },
+        durationMs: Date.now() - startedAt,
+      });
+    } finally {
+      releaseQuotaReservation(user.id);
+    }
   } catch (error) {
     const unauthorized = authFailureResponse(error);
 

@@ -62,6 +62,52 @@ export async function getDailyQuota(userId: string) {
   };
 }
 
+/**
+ * 飞行中的额度占用数（进程内存，单实例前提，与 rate-limit.ts 同一口径）。
+ *
+ * 为什么要有这个：额度检查和记账之间隔着一次真实的 AI 调用（几秒到几十秒），
+ * 两个并发请求可以同时数到「今天用了 29 次」然后双双放行 —— 一天被用掉 31 次。
+ * 这个计数器把「正在飞行的调用」也算进额度，占用在数账之前同步完成
+ * （JS 单线程保证同一时刻只有一个请求在改它），没有竞态窗口。
+ */
+const inflightReservations = new Map<string, number>();
+
+/**
+ * 占用一次今日额度槽位。返回是否还有额度，以及本次调用前已经用掉的次数。
+ * 拿到 allowed=true 的调用方必须在 finally 里调 releaseQuotaReservation。
+ */
+export async function tryReserveQuota(
+  userId: string
+): Promise<{ allowed: boolean; used: number }> {
+  // 先占位、再数账：占位是同步的，两个并发请求不可能都看到「自己没被算进去」
+  const reserved = (inflightReservations.get(userId) ?? 0) + 1;
+  inflightReservations.set(userId, reserved);
+
+  const used = await countTodayUsage(userId);
+
+  if (used + reserved > DAILY_AI_LIMIT) {
+    releaseQuotaReservation(userId);
+    return { allowed: false, used };
+  }
+
+  return { allowed: true, used };
+}
+
+/** 释放一次额度占用（AI 调用结束的 finally 里必调，占不到位的拒绝路径内部已释放） */
+export function releaseQuotaReservation(userId: string) {
+  const reserved = inflightReservations.get(userId);
+
+  if (!reserved) {
+    return;
+  }
+
+  if (reserved <= 1) {
+    inflightReservations.delete(userId);
+  } else {
+    inflightReservations.set(userId, reserved - 1);
+  }
+}
+
 export type AiUsageInput = {
   userId: string;
   projectId?: string | null;

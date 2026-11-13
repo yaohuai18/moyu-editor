@@ -156,3 +156,66 @@ describe("未登录访问受保护接口", () => {
     expect((await anonymous.json("/api/health")).status).toBe(200);
   });
 });
+
+describe("登录与注册限流", () => {
+  it("同一邮箱 5 分钟内尝试登录超过 10 次，第 11 次返回 429（防撞库）", async () => {
+    const client = new HttpClient();
+    const email = `p9-limit-${Date.now()}@test.local`;
+    let lastStatus = 0;
+    let lastBody: { code?: string } = {};
+
+    for (let attempt = 0; attempt < 11; attempt++) {
+      const csrf = await client.json<{ csrfToken: string }>("/api/auth/csrf");
+
+      const form = new URLSearchParams({
+        csrfToken: csrf.body?.csrfToken ?? "",
+        email,
+        password: "wrong-password-123456",
+        callbackUrl: `${BASE_URL}/`,
+      });
+
+      const response = await client.raw("/api/auth/callback/credentials", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-Auth-Return-Redirect": "1",
+        },
+        body: form.toString(),
+      });
+
+      lastStatus = response.status;
+
+      if (response.status === 429) {
+        lastBody = await response.json().catch(() => ({}));
+      }
+    }
+
+    expect(lastStatus, "第 11 次登录尝试应被限流返回 429").toBe(429);
+    expect(lastBody.code).toBe("RATE_LIMITED");
+  });
+
+  it("同一来源 IP 1 小时内注册超过 5 次，第 6 次返回 429（防批量注册枚举）", async () => {
+    const client = new HttpClient();
+    let lastStatus = 0;
+
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const response = await client.raw("/api/auth/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          // 带一个固定的假外网 IP，触发 IP 闸（回环地址是跳过的）
+          "X-Forwarded-For": "203.0.113.7",
+        },
+        body: JSON.stringify({
+          name: `限流测试${attempt}`,
+          email: `p9-reglimit-${Date.now()}-${attempt}@test.local`,
+          password: "p9-reglimit-123456",
+        }),
+      });
+
+      lastStatus = response.status;
+    }
+
+    expect(lastStatus, "第 6 次注册应被限流返回 429").toBe(429);
+  });
+});

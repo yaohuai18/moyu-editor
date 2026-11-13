@@ -23,7 +23,9 @@ const {
   getDailyQuota,
   recordAiFailure,
   recordAiUsage,
+  releaseQuotaReservation,
   startOfToday,
+  tryReserveQuota,
 } = await import("@/lib/ai-usage");
 
 describe("startOfToday", () => {
@@ -255,5 +257,52 @@ describe("recordAiFailure", () => {
     ).resolves.toBe(false);
 
     warnSpy.mockRestore();
+  });
+});
+
+describe("tryReserveQuota（并发额度占用）", () => {
+  beforeEach(() => {
+    aiUsageMock.count.mockReset();
+    aiUsageMock.count.mockResolvedValue(29);
+  });
+
+  it("已用 29 次时，并发 5 个请求只有 1 个能占到位（不会一天被用掉 31+ 次）", async () => {
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () => tryReserveQuota("u1"))
+    );
+
+    const allowed = results.filter((result) => result.allowed);
+
+    expect(allowed.length).toBe(1);
+    expect(allowed[0].used).toBe(29);
+
+    // 拿到槽位的必须释放，否则计数器泄漏、用户永远被拒
+    for (const result of allowed) {
+      releaseQuotaReservation("u1");
+    }
+  });
+
+  it("全部释放后还能继续占位（计数器没有泄漏）", async () => {
+    await tryReserveQuota("u1");
+    releaseQuotaReservation("u1");
+    await tryReserveQuota("u1");
+    releaseQuotaReservation("u1");
+
+    aiUsageMock.count.mockResolvedValue(29);
+
+    expect((await tryReserveQuota("u1")).allowed).toBe(true);
+    releaseQuotaReservation("u1");
+  });
+
+  it("额度已满时拒绝，且拒绝不占用槽位", async () => {
+    aiUsageMock.count.mockResolvedValue(30);
+
+    expect((await tryReserveQuota("u1")).allowed).toBe(false);
+
+    // 拒绝路径内部已释放：降到 29 后立刻又能占位
+    aiUsageMock.count.mockResolvedValue(29);
+
+    expect((await tryReserveQuota("u1")).allowed).toBe(true);
+    releaseQuotaReservation("u1");
   });
 });

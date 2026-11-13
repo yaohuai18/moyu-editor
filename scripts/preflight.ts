@@ -171,13 +171,16 @@ const secrets: Array<[string, string]> = [
   ["AI_API_KEY", env.AI_API_KEY ?? ""],
   ["AUTH_SECRET", env.AUTH_SECRET ?? ""],
 ];
-const staticDir = path.join(ROOT, ".next", "static");
+// 扫整个 .next 而不只是 static：2026-11-13 风险审查实测 Key 会漏进
+// .next/cache/turbopack 的 *.sst 缓存清单，只扫 static 完全看不见。
+// 旧的 .next-* 残留目录由清理任务处理，不在这里扫。
+const staticDir = path.join(ROOT, ".next");
 
 if (!fs.existsSync(staticDir)) {
-  warn("构建产物扫描", "还没构建过（没有 .next/static），跳过");
+  warn("构建产物扫描", "还没构建过（没有 .next），跳过");
 } else {
   const assetFiles = walk(staticDir, new Set()).filter((file) =>
-    /\.(js|mjs|css|html|json|txt)$/i.test(file)
+    /\.(js|mjs|css|html|json|txt|sst)$/i.test(file)
   );
 
   let totalBytes = 0;

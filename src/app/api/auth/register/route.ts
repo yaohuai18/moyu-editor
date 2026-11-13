@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/password";
-import { logRouteError } from "@/lib/log";
+import { logRouteError, API_ERROR_CODES } from "@/lib/log";
+import { checkRateLimit, getClientIp, isLoopbackIp } from "@/lib/rate-limit";
 
 const registerSchema = z.object({
   name: z.string().min(1).max(50),
@@ -17,6 +18,29 @@ const registerSchema = z.object({
  */
 export async function POST(request: NextRequest) {
   try {
+    // 注册限流：挡「批量注册 + 探测邮箱是否被占用」。
+    // 409「该邮箱已经注册」是产品功能（提示用户直接去登录），保留；
+    // 限流把批量枚举的成本拉高。回环地址跳过（接口测试从 127.0.0.1 来）。
+    const ip = getClientIp(request);
+
+    if (!isLoopbackIp(ip)) {
+      const limit = checkRateLimit(`register-ip:${ip}`, 5, 60 * 60_000);
+
+      if (!limit.allowed) {
+        return NextResponse.json(
+          {
+            error: "注册太频繁，请稍后再试",
+            code: API_ERROR_CODES.rateLimited,
+            retryAfter: limit.retryAfter,
+          },
+          {
+            status: 429,
+            headers: { "Retry-After": String(limit.retryAfter) },
+          }
+        );
+      }
+    }
+
     const body = await request.json();
     const data = registerSchema.parse(body);
 

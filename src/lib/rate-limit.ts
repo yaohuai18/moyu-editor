@@ -84,6 +84,33 @@ export function checkRateLimit(
   };
 }
 
+/**
+ * 从请求头取客户端 IP：反代场景取 x-forwarded-for 第一个值。
+ * 注意可伪造 —— 这是「挡普通撞库脚本」的闸，不是安全边界。
+ */
+export function getClientIp(request: Request): string {
+  const forwarded = request.headers.get("x-forwarded-for");
+
+  if (forwarded) {
+    return forwarded.split(",")[0].trim();
+  }
+
+  return "local";
+}
+
+/** 回环地址：本地开发与接口测试都从这里来，IP 闸对这些来源跳过。
+ *  注意 Node/Next 会把 IPv4 回环写成 IPv6 映射形式（::ffff:127.0.0.1），
+ *  不剥掉前缀就认不出来，限流会把整条测试套件当外网 IP 拦掉。 */
+export function isLoopbackIp(ip: string): boolean {
+  if (ip === "local") {
+    return true;
+  }
+
+  const normalized = ip.replace(/^::ffff:/i, "");
+
+  return normalized === "127.0.0.1" || normalized === "::1";
+}
+
 /** 只给测试用：清空所有计数 */
 export function resetRateLimit() {
   requests.clear();

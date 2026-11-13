@@ -3,16 +3,40 @@ import Credentials from "next-auth/providers/credentials";
 import { prisma } from "@/lib/prisma";
 import { verifyPassword } from "@/lib/password";
 
+/**
+ * 时序均衡用的假哈希：登录时如果邮箱不存在，也要真跑一次 bcrypt 比对，
+ * 让「账号不存在」和「密码错误」两条路径耗时一致 —— 否则用响应时间
+ * 就能批量试出哪些邮箱注册过（侧信道枚举）。这个值没有任何账号在用。
+ */
+const DUMMY_PASSWORD_HASH =
+  "$2b$12$4K7oizBal4D6ybW.DKRhvOQX9cIS7g4ATECVA5KjPFpammeBEVFuq";
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  // 本地跑的是 http://localhost:3001，反向代理/端口转发场景下
-  // Auth.js 需要一个明确的信任标记，否则会报 UntrustedHost。
-  // 部署到正式域名后，把这个换成 AUTH_URL 环境变量更稳妥。
-  trustHost: true,
+  // 信任标记从环境变量来，不再硬编码 true：
+  // - 本地开发：.env 里 AUTH_TRUST_HOST=true（.env.example 的默认值）；
+  // - 正式域名：配 AUTH_URL，Auth.js 会自动信任它。
+  trustHost: process.env.AUTH_TRUST_HOST === "true",
 
   session: {
     // 会话数据加密后存在 Cookie 里，服务端不落库。
     // 好处：下线/重启不掉登录；代价：改密码后旧 Cookie 不会立刻失效。
     strategy: "jwt",
+  },
+
+  // 把会话 Cookie 的行为显式写死在代码里（Auth.js 的默认值会随版本变）：
+  // HttpOnly 防止 JS 读取、SameSite=Lax 挡跨站携带、https 部署时自动 Secure。
+  cookies: {
+    sessionToken: {
+      name: process.env.AUTH_URL?.startsWith("https://")
+        ? "__Secure-authjs.session-token"
+        : "authjs.session-token",
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.AUTH_URL?.startsWith("https://") ?? false,
+      },
+    },
   },
 
   providers: [
@@ -39,7 +63,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         // 没这个用户、或者是从没设过密码的账号，一律当登录失败，
         // 不告诉外面「是邮箱错还是密码错」。
+        // 但两条失败路径的耗时必须一样：不存在账号时也真跑一次 bcrypt，
+        // 堵住「响应快 = 邮箱没注册」的枚举侧信道。
         if (!user?.passwordHash) {
+          await verifyPassword(password, DUMMY_PASSWORD_HASH);
           return null;
         }
 

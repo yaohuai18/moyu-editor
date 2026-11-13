@@ -6,6 +6,7 @@ import {
   requireUser,
 } from "@/lib/require-user";
 import { API_ERROR_CODES, logRouteError } from "@/lib/log";
+import { checkRateLimit } from "@/lib/rate-limit";
 import {
   buildProjectExport,
   buildProjectExportFilename,
@@ -40,6 +41,24 @@ export async function GET(
       return NextResponse.json(
         { error: access.error, code: API_ERROR_CODES.access },
         { status: access.status }
+      );
+    }
+
+    // 导出要整书拼字符串，几十万字能瞬间吃满 CPU/内存。
+    // 温和限流：每人每分钟 20 次，正常使用（手点导出）根本摸不到。
+    const limit = checkRateLimit(`export:${user.id}`, 20, 60_000);
+
+    if (!limit.allowed) {
+      return NextResponse.json(
+        {
+          error: "导出太频繁，请稍后再试",
+          code: API_ERROR_CODES.rateLimited,
+          retryAfter: limit.retryAfter,
+        },
+        {
+          status: 429,
+          headers: { "Retry-After": String(limit.retryAfter) },
+        }
       );
     }
 
