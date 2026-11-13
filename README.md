@@ -54,11 +54,11 @@
 
 | 层 | 选型 |
 |---|---|
-| 前端 / 服务端 | Next.js 16（App Router）+ React 18 + TypeScript |
+| 前端 / 服务端 | Next.js 16（App Router）+ React 19.2.8 + TypeScript |
 | 数据库 | Prisma + SQLite（单机友好，可换 Postgres） |
 | AI | DeepSeek API，仅在服务端调用，密钥不下发浏览器 |
 | 认证 | 邮箱 + 密码（bcrypt 哈希），会话签名 |
-| 测试 | Vitest —— 单元测试 88 项、接口测试 81 项 |
+| 测试 | Vitest —— 单元测试 94 项、接口测试 87 项（2026-11-13 实测，`verify.cmd -Full`） |
 
 ## 快速开始
 
@@ -312,9 +312,10 @@ AI 就是按新的风格要求改的。
 
 ### 上线前必做
 
-1. `.env` 里的 `AUTH_SECRET` 换成你自己生成的（生成命令在 `.env.example` 里）
-2. 删掉或改掉演示账号 `demo@moyu.local`（作品先用 `npm run works:move -- 你的邮箱` 搬走）
-3. 接口归属校验已经全部加上了，但放到公网前，先跑一次 `npm run preflight`
+1. **作废已泄露的 DeepSeek AI Key**：在 DeepSeek 控制台删除旧 Key、换新后写入 `.env`（旧 Key 曾明文出现在构建缓存与对话记录里，按已泄露处理）
+2. `.env` 里的 `AUTH_SECRET` 换成你自己生成的（生成命令在 `.env.example` 里；旧值也可能已泄露）
+3. 处理演示账号 `demo@moyu.local`：旧密码已公开且留在公开仓库的历史提交里，设 `DEMO_USER_PASSWORD` 后重跑 `npm run db:seed` 轮换（旧登录会话会全部失效）
+4. 接口归属校验已经全部加上了，但放到公网前，先跑一次 `npm run preflight`
 
 ### 部署顺序（照着走）
 
@@ -850,6 +851,8 @@ moyu-editor/
 │  ├─ seed.ts              ← 演示数据
 │  ├─ migrations/          ← 迁移记录，别手改
 │  └─ dev.db               ← 本地数据库文件（不进 git）
+├─ demo/
+│  └─ index.html           ← 离线体验版（单文件 HTML，零依赖零网络请求，不参与构建）
 ├─ src/
 │  ├─ auth.ts              ← 登录配置（Auth.js：邮箱密码登录、会话签名）
 │  ├─ instrumentation.ts   ← 启动时跑一次环境体检（缺关键变量就在日志里喊）
@@ -982,13 +985,13 @@ Key 是服务器端代理发送的，浏览器里抓不到，前端代码里也�
 上线前仍然建议补的：
 
 - 多实例部署时把内存限流换成 Redis（否则每个实例各记各的，限流形同虚设）；
-  每日额度同理，现在每次都要查一次数据库
+  每日额度同理（已有进程内飞行计数，跨实例仍会失效）
 - 换 Postgres 之后把 `DATABASE_URL` 换掉（现在这台机器上没装 Postgres，所以还是 SQLite）
 - 把错误日志接到 Sentry 之类的服务（现在只打 `console.error`，接的时候
   只需要改 `src/lib/log.ts` 一个函数）
 - 给 `npm run db:backup` 配一个每日定时任务（现在要人记得跑）
 - **上线前必做三件**：作废泄露过的 AI Key、处理演示账号 `demo@moyu.local`、
-  换掉 `.env` 里的 `AUTH_SECRET`（详见 `_p10/第十阶段-验收报告.txt` 第十二节）
+  换掉 `.env` 里的 `AUTH_SECRET`（详见 `docs/部署说明.md` 与项目 `AGENTS.md` 第八节）
 
 
 ---

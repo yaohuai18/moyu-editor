@@ -262,6 +262,46 @@ async function main() {
 
       report.raw(`      库文件：${dbFile}（${formatBytes(statSync(dbFile).size)}）`);
     }
+
+    // 备份时效：最新备份超过 24 小时就提醒 —— 「忘了备份」应该被每天的
+    // 巡检点名，而不是等到出事才想起来（项目承诺「一天一次」）。
+    try {
+      const { readdirSync, statSync } = await import("node:fs");
+      const { join } = await import("node:path");
+
+      const backupsDir = join(process.cwd(), "backups");
+      const backups = readdirSync(backupsDir)
+        .filter((name) => name.endsWith(".db"))
+        .map((name) => {
+          const file = join(backupsDir, name);
+          return { name, mtimeMs: statSync(file).mtimeMs };
+        })
+        .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+      if (backups.length === 0) {
+        report.fail(
+          "没有任何数据库备份",
+          "backups/ 是空的 —— 先跑 npm run db:backup，再跑 npm run db:restore-drill 演练"
+        );
+      } else {
+        const newest = backups[0];
+        const ageHours = Math.round((Date.now() - newest.mtimeMs) / 3_600_000);
+
+        if (ageHours > 24) {
+          report.warn(
+            "最新备份已过期",
+            `${newest.name}（${ageHours} 小时前）—— 承诺「一天一次」，请跑 npm run db:backup`
+          );
+        } else {
+          report.ok("备份时效正常", `${newest.name}（${ageHours} 小时前）`);
+        }
+      }
+    } catch (error) {
+      report.warn(
+        "备份目录读不了",
+        error instanceof Error ? error.message.split("\n")[0] : String(error)
+      );
+    }
   } catch (error) {
     report.fail(
       "数据库连不上",
