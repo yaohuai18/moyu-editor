@@ -15,7 +15,24 @@ type ProjectSettings = {
     tone: string | null;
     viewpoint: string | null;
     sentenceStyle: string | null;
+    forbiddenWords: string | null;
   } | null;
+};
+
+/**
+ * 文风蒸馏草稿（P1-2）。
+ *
+ * 只建议、不落库：用户点「填入表单」后这些值才进本地 state，
+ * 最终仍要按原有流程点「保存设置」。
+ */
+type StyleDistillDraft = {
+  tone?: string;
+  viewpoint?: string;
+  sentenceStyle?: string;
+  forbiddenWords: string[];
+  summary?: string;
+  sample?: { chapters: number; chars: number; truncated?: boolean };
+  usage?: { used: number; limit: number; remaining: number };
 };
 
 export default function SettingsClient({
@@ -37,6 +54,14 @@ export default function SettingsClient({
   const [tone, setTone] = useState("");
   const [viewpoint, setViewpoint] = useState("");
   const [sentenceStyle, setSentenceStyle] = useState("");
+  const [forbiddenWords, setForbiddenWords] = useState("");
+
+  /** 文风蒸馏：进行中 / 错误 / 草稿（草稿只在本地，不落库） */
+  const [distilling, setDistilling] = useState(false);
+  const [distillError, setDistillError] = useState("");
+  const [distillDraft, setDistillDraft] = useState<StyleDistillDraft | null>(
+    null
+  );
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -86,6 +111,7 @@ export default function SettingsClient({
         setTone(data.styleProfile?.tone || "");
         setViewpoint(data.styleProfile?.viewpoint || "");
         setSentenceStyle(data.styleProfile?.sentenceStyle || "");
+        setForbiddenWords(data.styleProfile?.forbiddenWords || "");
       } catch (error) {
         if (!cancelled) {
           setError(
@@ -129,6 +155,7 @@ export default function SettingsClient({
           tone: tone.trim(),
           viewpoint: viewpoint.trim(),
           sentenceStyle: sentenceStyle.trim(),
+          forbiddenWords: forbiddenWords.trim(),
         }),
       });
 
@@ -145,12 +172,112 @@ export default function SettingsClient({
       setTone(data.styleProfile?.tone || "");
       setViewpoint(data.styleProfile?.viewpoint || "");
       setSentenceStyle(data.styleProfile?.sentenceStyle || "");
+      setForbiddenWords(data.styleProfile?.forbiddenWords || "");
       setMessage("设置已保存");
     } catch (error) {
       setError(error instanceof Error ? error.message : "保存失败");
     } finally {
       setSaving(false);
     }
+  }
+
+  /**
+   * 从已有章节蒸馏文风（P1-2）。
+   *
+   * 只拿回**草稿**，绝不自动写表单、更不自动保存 ——
+   * 作者点「填入表单」才进 state，最后还要自己点「保存设置」。
+   * AI 可以提建议，但不能替作者决定他是什么文风。
+   */
+  async function distillStyle() {
+    if (!projectId || distilling) {
+      return;
+    }
+
+    setDistilling(true);
+    setDistillError("");
+    setDistillDraft(null);
+    setMessage("");
+    setError("");
+
+    try {
+      const response = await fetch(
+        `/api/projects/${projectId}/distill-style`,
+        { method: "POST" }
+      );
+
+      const data = await response.json().catch(() => ({}));
+
+      if (response.status === 401) {
+        redirectToLogin();
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(data.error || "文风提取失败");
+      }
+
+      setDistillDraft({
+        tone: typeof data.tone === "string" ? data.tone : undefined,
+        viewpoint:
+          typeof data.viewpoint === "string" ? data.viewpoint : undefined,
+        sentenceStyle:
+          typeof data.sentenceStyle === "string" ? data.sentenceStyle : undefined,
+        forbiddenWords: Array.isArray(data.forbiddenWords)
+          ? data.forbiddenWords.filter(
+              (word: unknown): word is string => typeof word === "string"
+            )
+          : [],
+        summary: typeof data.summary === "string" ? data.summary : undefined,
+        sample:
+          data.sample && typeof data.sample.chapters === "number"
+            ? {
+                chapters: data.sample.chapters,
+                chars: Number(data.sample.chars) || 0,
+                truncated: Boolean(data.sample.truncated),
+              }
+            : undefined,
+        usage:
+          data.usage && typeof data.usage.remaining === "number"
+            ? {
+                used: Number(data.usage.used) || 0,
+                limit: Number(data.usage.limit) || 0,
+                remaining: Number(data.usage.remaining) || 0,
+              }
+            : undefined,
+      });
+    } catch (err) {
+      setDistillError(
+        err instanceof Error ? err.message : "文风提取失败，请稍后重试"
+      );
+    } finally {
+      setDistilling(false);
+    }
+  }
+
+  /** 把草稿填进表单（不保存）。空字段不覆盖用户已有内容 —— 模型没归纳出来的维度，别把人家手填的抹掉 */
+  function applyDistillDraft() {
+    if (!distillDraft) {
+      return;
+    }
+
+    if (distillDraft.tone) {
+      setTone(distillDraft.tone);
+    }
+
+    if (distillDraft.viewpoint) {
+      setViewpoint(distillDraft.viewpoint);
+    }
+
+    if (distillDraft.sentenceStyle) {
+      setSentenceStyle(distillDraft.sentenceStyle);
+    }
+
+    if (distillDraft.forbiddenWords.length > 0) {
+      setForbiddenWords(distillDraft.forbiddenWords.join("、"));
+    }
+
+    setDistillDraft(null);
+    setMessage("已把提取结果填入表单，请核对后点下方「保存设置」生效");
   }
 
   /** 删除这部作品（连同章节、版本历史、人物卡一起） */
@@ -324,6 +451,128 @@ export default function SettingsClient({
               placeholder="例如：短句为主，少用抽象形容词，动作描写具体"
             />
           </label>
+
+          <label className="block">
+            <span className="mb-2 block text-sm font-medium">禁用词</span>
+            <textarea
+              value={forbiddenWords}
+              onChange={(event) => setForbiddenWords(event.target.value)}
+              className="min-h-20 w-full resize-y rounded-lg border border-slate-200 px-3 py-2 leading-6 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-50"
+              placeholder="例如：不由得、心中一震、瞳孔骤缩（用顿号分隔，AI 诊断/润色时会尽量避开）"
+            />
+            <span className="mt-1 block text-xs text-slate-400">
+              AI 诊断和润色会尽量避开这些表达；留空表示不限制。
+            </span>
+          </label>
+
+          {/* ===== 文风蒸馏（P1-2）=====
+              只出建议、不写库：点「填入表单」才进本地 state，
+              最终仍要按上面的「保存设置」流程走一遍。 */}
+          <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-slate-700">
+                  从已有章节提取文风
+                </p>
+                <p className="mt-1 text-xs leading-6 text-slate-500">
+                  读取最近 3 章正文，归纳语气、视角、句式和常用套话。
+                  只生成建议、不自动保存；消耗 1 次 AI 额度。
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={distillStyle}
+                disabled={distilling || saving}
+                aria-busy={distilling}
+                className="shrink-0 rounded-lg border border-blue-200 bg-white px-4 py-2 text-sm font-medium text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {distilling ? "提取中…" : "提取文风"}
+              </button>
+            </div>
+
+            {distillError && (
+              <p
+                role="alert"
+                className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700"
+              >
+                ⚠ {distillError}
+              </p>
+            )}
+
+            {distillDraft && (
+              <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                <p className="text-xs font-medium text-slate-500">
+                  提取结果（草稿，尚未保存）
+                  {distillDraft.sample
+                    ? ` — 样本 ${distillDraft.sample.chapters} 章 / ${distillDraft.sample.chars} 字符${
+                        distillDraft.sample.truncated ? "（已截断）" : ""
+                      }`
+                    : ""}
+                </p>
+
+                <dl className="mt-2 space-y-1.5 text-xs leading-6">
+                  <div className="flex gap-2">
+                    <dt className="w-16 shrink-0 text-slate-400">语气</dt>
+                    <dd className="text-slate-700">
+                      {distillDraft.tone || "（样本不足以判断）"}
+                    </dd>
+                  </div>
+                  <div className="flex gap-2">
+                    <dt className="w-16 shrink-0 text-slate-400">视角</dt>
+                    <dd className="text-slate-700">
+                      {distillDraft.viewpoint || "（样本不足以判断）"}
+                    </dd>
+                  </div>
+                  <div className="flex gap-2">
+                    <dt className="w-16 shrink-0 text-slate-400">句式</dt>
+                    <dd className="text-slate-700">
+                      {distillDraft.sentenceStyle || "（样本不足以判断）"}
+                    </dd>
+                  </div>
+                  <div className="flex gap-2">
+                    <dt className="w-16 shrink-0 text-slate-400">禁用词</dt>
+                    <dd className="text-slate-700">
+                      {distillDraft.forbiddenWords.length > 0
+                        ? distillDraft.forbiddenWords.join("、")
+                        : "（未发现明显套话）"}
+                    </dd>
+                  </div>
+                </dl>
+
+                {distillDraft.summary && (
+                  <p className="mt-2 border-t border-slate-100 pt-2 text-xs leading-6 text-slate-500">
+                    总评：{distillDraft.summary}
+                  </p>
+                )}
+
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={applyDistillDraft}
+                    className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-blue-700"
+                  >
+                    填入表单
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setDistillDraft(null)}
+                    className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-600 transition hover:bg-slate-50"
+                  >
+                    忽略
+                  </button>
+
+                  {distillDraft.usage && (
+                    <span className="text-xs text-slate-400">
+                      今日 AI 剩余 {distillDraft.usage.remaining} /{" "}
+                      {distillDraft.usage.limit} 次
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           {error && (
             <div

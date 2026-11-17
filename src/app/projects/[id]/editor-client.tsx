@@ -60,6 +60,48 @@ type DiagnosisIssue = {
   severity: "low" | "medium" | "high";
 };
 
+/** 诊断附带的模板化程度评分（服务端已钳制到 0-100 整数，可能没有） */
+type DiagnosisScore = {
+  score: number;
+  summary?: string;
+};
+
+/**
+ * 分数 → 文案与配色。
+ * 分档不看「及格线」：0-25 基本自然，26-50 轻微，51-75 明显，76+ 严重。
+ */
+function describeScore(score: number) {
+  if (score <= 25) {
+    return {
+      label: "基本自然，模板痕迹少",
+      text: "text-emerald-600",
+      bar: "bg-emerald-500",
+    };
+  }
+
+  if (score <= 50) {
+    return {
+      label: "轻微模板化，建议按问题清单梳理一遍",
+      text: "text-blue-600",
+      bar: "bg-blue-500",
+    };
+  }
+
+  if (score <= 75) {
+    return {
+      label: "明显模板化，多处表达需要改写",
+      text: "text-amber-600",
+      bar: "bg-amber-500",
+    };
+  }
+
+  return {
+    label: "模板化严重，建议整段重写后再润色",
+    text: "text-red-600",
+    bar: "bg-red-500",
+  };
+}
+
 type PolishResult = {
   originalText: string;
   revisedText: string;
@@ -125,6 +167,14 @@ export default function EditorClient({
     "none"
   );
   const [diagnosis, setDiagnosis] = useState<DiagnosisIssue[]>([]);
+  /**
+   * 诊断附带的模板化程度评分（0-100，越低越自然）。
+   * 与 issues 分开存：老响应 / 模型没给分时为 null，界面只隐藏分数条，
+   * 问题清单照常显示 —— 不让「没有分数」影响主功能。
+   */
+  const [diagnosisScore, setDiagnosisScore] = useState<DiagnosisScore | null>(
+    null
+  );
   const [polishResult, setPolishResult] = useState<PolishResult | null>(null);
   const [aiMessage, setAiMessage] = useState("");
   // 提示语挂在哪个面板上（诊断/润色），避免两处重复显示或串位
@@ -554,6 +604,7 @@ export default function EditorClient({
       setPanelNotice("");
       // 换章时清掉上一章的诊断/润色结果与打开的版本预览，避免张冠李戴
       setDiagnosis([]);
+      setDiagnosisScore(null);
       setPolishResult(null);
       setAiMessage("");
       setAiOutcome("none");
@@ -830,6 +881,7 @@ export default function EditorClient({
     setAiBusy(action);
     setAiMessage("");
     setDiagnosis([]);
+    setDiagnosisScore(null);
     setAiOutcome("none");
     setCopyNotice("");
 
@@ -922,6 +974,18 @@ export default function EditorClient({
 
       if (action === "diagnose") {
         setDiagnosis(data.issues || []);
+        // 分数是可选字段：服务端已钳制到 0-100 整数，这里只挡「不是数字」的情况
+        setDiagnosisScore(
+          typeof data.score === "number" && Number.isFinite(data.score)
+            ? {
+                score: data.score,
+                summary:
+                  typeof data.summary === "string" && data.summary.trim()
+                    ? data.summary.trim()
+                    : undefined,
+              }
+            : null
+        );
         setAiOutcome("done");
         setAiMessage(
           data.issues?.length
@@ -1532,7 +1596,7 @@ export default function EditorClient({
             <h3 className="text-sm font-semibold text-slate-700">文本诊断</h3>
 
             <p className="mt-2 text-xs leading-6 text-slate-500">
-              检查重复表达、空泛描写、句式单一和节奏问题。
+              检查重复表达、空泛描写、句式单一、节奏问题和模板化表达，并给出模板化程度评分。
             </p>
 
             <button
@@ -1547,6 +1611,50 @@ export default function EditorClient({
             >
               {aiBusy === "diagnose" ? "分析中…" : "开始诊断"}
             </button>
+
+            {diagnosisScore && (
+              <div className="mt-3 rounded-xl border border-slate-200 p-3">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-xs font-medium text-slate-700">
+                    模板化程度
+                  </span>
+
+                  <span
+                    className={`text-lg font-semibold ${describeScore(diagnosisScore.score).text}`}
+                  >
+                    {diagnosisScore.score}
+                    <span className="ml-0.5 text-xs font-normal text-slate-500">
+                      / 100
+                    </span>
+                  </span>
+                </div>
+
+                <div
+                  // 纯展示的进度条，语义交给外层 aria-label，读屏不逐像素念
+                  role="img"
+                  aria-label={`模板化程度 ${diagnosisScore.score} 分，满分 100`}
+                  className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100"
+                >
+                  <div
+                    className={`h-full rounded-full ${describeScore(diagnosisScore.score).bar}`}
+                    style={{ width: `${diagnosisScore.score}%` }}
+                  />
+                </div>
+
+                <p className="mt-2 text-xs leading-6 text-slate-600">
+                  {describeScore(diagnosisScore.score).label}
+                  <span className="text-slate-400">
+                    （0 最自然，100 最模板化）
+                  </span>
+                </p>
+
+                {diagnosisScore.summary && (
+                  <p className="mt-1 text-xs leading-6 text-slate-500">
+                    {diagnosisScore.summary}
+                  </p>
+                )}
+              </div>
+            )}
 
             {diagnosis.length > 0 && (
               <div className="mt-3 space-y-3">

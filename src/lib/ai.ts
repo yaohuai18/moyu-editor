@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { countWords } from "@/lib/wordCount";
 import { AI_MAX_INPUT_CHARS, AI_MAX_INPUT_WORDS } from "@/lib/ai-limits";
+import {
+  CLICHE_CHECKLIST,
+  CLICHE_POLISH_RULES,
+  DIAGNOSE_TYPE_NAMES,
+} from "@/lib/ai-cliches";
 
 /**
  * 兜底护栏：这个模块一旦被客户端组件 import，浏览器里会立刻炸。
@@ -54,6 +59,16 @@ export type AiDiagnoseIssue = {
 export type AiDiagnoseResult = {
   mode: "diagnose";
   issues: AiDiagnoseIssue[];
+  /**
+   * 模板化程度评分（0-100，越低越自然）。
+   *
+   * 可选：模型没给分或给的不是数字时为 undefined，前端不显示分数条。
+   * 越界值（比如模型手滑给 120）在 runAiEdit 里钳制到 [0,100] 并取整，
+   * 不让一个越界数字把整次诊断判成格式错误。
+   */
+  score?: number;
+  /** 一句话总评（可选，模型没给就不显示） */
+  summary?: string;
 };
 
 export type AiPolishResult = {
@@ -170,10 +185,17 @@ function buildSystemPrompt(mode: AiEditMode) {
 - 叙事节奏突然变快或变慢
 - 不必要的套话
 - 逻辑衔接不清
+- 模板化表达（按下面的清单逐条比对，命中且空泛才报告）
 
-只报告有实际帮助的问题，最多报告 8 项。
+模板化表达检查清单（检查线索，不是词语黑名单；单次命中不等于问题，要回到上下文判断）：
+${CLICHE_CHECKLIST}
+
+只报告有实际帮助的问题，最多报告 8 项；叙事/人物/逻辑类问题与模板化表达类问题都要覆盖。
+issue 的 type 从以下固定命名中选择：${DIAGNOSE_TYPE_NAMES}
 返回格式：
 {
+  "score": 0 到 100 的整数，表示模板化程度（0=几乎无模板痕迹，100=通篇模板化；按清单命中的密度与严重度综合估算，不要与问题条数简单挂钩）,
+  "summary": "一句话总评，不超过 40 字",
   "issues": [
     {
       "type": "问题类型",
@@ -198,6 +220,8 @@ function buildSystemPrompt(mode: AiEditMode) {
 - 返回完整修改稿，而不是片段。
 - 最多总结 6 条主要修改。
 
+${CLICHE_POLISH_RULES}
+
 返回格式：
 {
   "revisedText": "完整的修改稿",
@@ -219,6 +243,14 @@ ${input.content}
 // ===== 上游调用 =====
 
 const diagnosisSchema = z.object({
+  /**
+   * score / summary 都是 optional，且类型收 unknown —— 这是**有意的向后兼容**：
+   * 老模型、老假上游、以及模型手滑把分数写成字符串（"45分"）时，
+   * 都由 normalizeScore / 下面的类型判断兜底成「没给分」，
+   * 绝不能因为一个可选字段的脏值把整次诊断判成格式错误（用户白花一次额度）。
+   */
+  score: z.unknown().optional(),
+  summary: z.unknown().optional(),
   issues: z.array(
     z.object({
       type: z.string(),
@@ -310,6 +342,22 @@ async function callProvider(options: {
   };
 }
 
+/**
+ * 把模型给的评分钳到 [0,100] 并取整。
+ *
+ * 为什么不在 zod 里用 .min(0).max(100)：模型偶尔会手滑给 105 或 -1，
+ * 严格校验会把「整次诊断」判成格式错误，用户白花一次额度却什么都没拿到。
+ * 一个越界的分数是小事，钳一下就好；分数本身不可用（缺字段 / 非数字）时
+ * 返回 undefined，界面不显示分数条。
+ */
+function normalizeScore(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
 // ===== 对外入口 =====
 
 /**
@@ -374,7 +422,18 @@ export async function runAiEdit(input: AiEditInput): Promise<AiEditResult> {
       throw new AiError("AI_INVALID_FORMAT");
     }
 
-    return { mode: "diagnose", issues: diagnosis.data.issues };
+    /** 空字符串 / 纯空白 / 非字符串的 summary 当没给，避免界面出现空段落 */
+    const summary =
+      typeof diagnosis.data.summary === "string"
+        ? diagnosis.data.summary.trim()
+        : "";
+
+    return {
+      mode: "diagnose",
+      issues: diagnosis.data.issues,
+      score: normalizeScore(diagnosis.data.score),
+      summary: summary || undefined,
+    };
   }
 
   const polish = polishSchema.safeParse(parsed);
@@ -394,4 +453,221 @@ export async function runAiEdit(input: AiEditInput): Promise<AiEditResult> {
     revisedText: polish.data.revisedText,
     changes: polish.data.changes,
   };
+}
+
+// ===== 文风蒸馏（P1-2）=====
+
+/**
+ * 从作者已有章节里提炼「作品风格档案」草稿。
+ *
+ * 产品语义（改动前先读）：这一步只**建议**，绝不直接写库。
+ * 蒸馏出来的东西是给作者过目的草稿，作者在设置页确认/修改后
+ * 再走原有的保存接口 —— AI 不能悄悄改一个人的文风设定。
+ */
+
+export type StyleDistillInput = {
+  projectTitle?: string | null;
+  genre?: string | null;
+  /** 已拼好的章节样本（含小标题）。取样与截断由调用方（路由层）负责 */
+  samples: string;
+};
+
+export type StyleDistillResult = {
+  /** 基调，如「冷峻克制」；样本不足时缺省 */
+  tone?: string;
+  /** 叙事视角，如「第三人称限知」 */
+  viewpoint?: string;
+  /** 句式风格描述 */
+  sentenceStyle?: string;
+  /** 从样本里抓到的、作者容易重复成口头禅的程式化表达（4-12 个） */
+  forbiddenWords: string[];
+  /** 一句话总评 */
+  summary?: string;
+};
+
+const DISTILL_SYSTEM_PROMPT = `你是一名中文小说编辑，任务是从作者已有的章节样本中归纳「作品风格档案」。
+
+只依据样本里反复出现的实际写法归纳。不要套用通用写作理论，不要编造样本中不存在的特征。
+如果样本不足以判断某个维度，该字段返回空字符串，不要硬编。
+
+分析维度：
+1. tone：基调，2-12 字，如「冷峻克制」「市井幽默」
+2. viewpoint：叙事视角，如「第三人称限知」「第一人称」
+3. sentenceStyle：句式风格，不超过 50 字，写可执行的特征（句长节奏、常见句式、对话占比等）
+4. forbiddenWords：从样本里找出作者容易重复成口头禅的程式化表达（如「不由得」「心中一震」「瞳孔骤缩」），4-12 个。
+   只收样本中真实出现过的词句，不要凭空造；这是给作者的自查清单，用来提醒克制，不是判定标准
+5. summary：一句话总评，不超过 50 字
+
+输出必须严格符合要求的 JSON，不要输出 Markdown 代码块：
+{
+  "tone": "...",
+  "viewpoint": "...",
+  "sentenceStyle": "...",
+  "forbiddenWords": ["...", "..."],
+  "summary": "..."
+}`;
+
+function buildDistillUserPrompt(input: StyleDistillInput) {
+  const meta = [
+    input.projectTitle && `作品：${input.projectTitle}`,
+    input.genre && `类型：${input.genre}`,
+  ].filter(Boolean);
+
+  return `${
+    meta.length ? meta.join("\n") + "\n\n" : ""
+  }以下是作者已发布的章节样本（可能经过截断）：
+---
+${input.samples}
+---
+`;
+}
+
+/** 只接受字符串，去空白、限长；空值返回 undefined */
+function toStyleText(value: unknown, maxLength: number) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+
+  return trimmed ? trimmed.slice(0, maxLength) : undefined;
+}
+
+/**
+ * 禁用词清洗：接受数组或分隔符字符串，去空去重、限 12 个、每个限 12 字。
+ * 模型偶尔会给「不由得、心中一震」这种一串的写法，也一并兼容。
+ */
+function normalizeForbiddenWords(value: unknown) {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[、,，;；\n]/)
+      : [];
+
+  const seen = new Set<string>();
+  const words: string[] = [];
+
+  for (const item of raw) {
+    if (typeof item !== "string") {
+      continue;
+    }
+
+    const word = item.trim().slice(0, 12);
+
+    if (!word || seen.has(word)) {
+      continue;
+    }
+
+    seen.add(word);
+    words.push(word);
+
+    if (words.length >= 12) {
+      break;
+    }
+  }
+
+  return words;
+}
+
+const styleDistillSchema = z.object({
+  /**
+   * 与诊断的 score/summary 同一策略：字段全部收 unknown，
+   * 由下面的归一化函数保证类型 —— 模型把数组写成字符串也不至于让整次蒸馏失败。
+   */
+  tone: z.unknown().optional(),
+  viewpoint: z.unknown().optional(),
+  sentenceStyle: z.unknown().optional(),
+  forbiddenWords: z.unknown().optional(),
+  summary: z.unknown().optional(),
+});
+
+/** 蒸馏输出上限：档案字段都是短文本，给多了纯属浪费 */
+function resolveDistillMaxTokens() {
+  const fromEnv = Number(process.env.AI_DISTILL_MAX_TOKENS);
+  const value = Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : 1200;
+
+  return Math.min(Math.floor(value), 4096);
+}
+
+export async function runStyleDistill(
+  input: StyleDistillInput
+): Promise<StyleDistillResult> {
+  const apiKey = process.env.AI_API_KEY;
+  const model = process.env.AI_MODEL;
+  const baseUrl = process.env.AI_BASE_URL || "https://api.deepseek.com";
+
+  if (!apiKey || !model) {
+    throw new AiError("AI_NOT_CONFIGURED");
+  }
+
+  const callOptions = {
+    baseUrl,
+    apiKey,
+    model,
+    systemPrompt: DISTILL_SYSTEM_PROMPT,
+    userPrompt: buildDistillUserPrompt(input),
+    // 比诊断略高一点：要在写法上做归纳，纯 0 温度容易只抓字面
+    temperature: 0.3,
+    maxTokens: resolveDistillMaxTokens(),
+  };
+
+  let result = await callProvider({ ...callOptions, jsonMode: true });
+
+  if (!result.ok && result.status === 400) {
+    result = await callProvider({ ...callOptions, jsonMode: false });
+  }
+
+  if (!result.ok) {
+    console.error(
+      "AI distill provider error:",
+      result.status,
+      result.content?.slice(0, 300)
+    );
+
+    throw new AiError("AI_PROVIDER_ERROR", { upstreamStatus: result.status });
+  }
+
+  if (!result.content) {
+    throw new AiError("AI_EMPTY_RESPONSE");
+  }
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(extractJson(result.content));
+  } catch {
+    console.error("AI distill returned non-JSON:", result.content.slice(0, 400));
+
+    throw new AiError("AI_INVALID_FORMAT");
+  }
+
+  const parsedStyle = styleDistillSchema.safeParse(parsed);
+
+  if (!parsedStyle.success) {
+    console.error("AI distill shape mismatch:", parsedStyle.error.issues);
+
+    throw new AiError("AI_INVALID_FORMAT");
+  }
+
+  const distilled: StyleDistillResult = {
+    tone: toStyleText(parsedStyle.data.tone, 30),
+    viewpoint: toStyleText(parsedStyle.data.viewpoint, 30),
+    sentenceStyle: toStyleText(parsedStyle.data.sentenceStyle, 120),
+    forbiddenWords: normalizeForbiddenWords(parsedStyle.data.forbiddenWords),
+    summary: toStyleText(parsedStyle.data.summary, 120),
+  };
+
+  // 五个字段全空 = 模型什么也没归纳出来，等于白调一次，按空响应处理
+  const hasContent =
+    distilled.tone ||
+    distilled.viewpoint ||
+    distilled.sentenceStyle ||
+    distilled.forbiddenWords.length > 0 ||
+    distilled.summary;
+
+  if (!hasContent) {
+    throw new AiError("AI_EMPTY_RESPONSE");
+  }
+
+  return distilled;
 }

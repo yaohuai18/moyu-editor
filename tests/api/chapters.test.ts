@@ -79,7 +79,7 @@ describe("保存章节", () => {
       `/api/chapters/${chapterId}`
     );
 
-    const text = "雨停了。\n周砚站在窗前，没有说话。";
+    const text = "雨停了。\n程野站在窗前，没有说话。";
 
     const saved = await author.patch(`/api/chapters/${chapterId}`, {
       content: text,
@@ -109,7 +109,7 @@ describe("保存章节", () => {
     );
 
     expect(detail.status).toBe(200);
-    expect(detail.body.content).toContain("周砚");
+    expect(detail.body.content).toContain("程野");
   });
 
   it("改标题不影响正文", async () => {
@@ -365,7 +365,7 @@ describe("版本历史与回滚", () => {
         `/api/projects/${projectId}/revisions/${item.id}`
       );
 
-      if (detail.body.content.includes("周砚")) {
+      if (detail.body.content.includes("程野")) {
         target = item;
         break;
       }
@@ -382,7 +382,7 @@ describe("版本历史与回滚", () => {
     );
 
     expect(restored.status).toBe(200);
-    expect(restored.body.content).toContain("周砚");
+    expect(restored.body.content).toContain("程野");
     // 回滚也是一次写入，版本号必须跟着走
     expect(restored.body.version).toBeGreaterThan(before.body.version);
 

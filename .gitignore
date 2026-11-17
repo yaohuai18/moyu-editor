@@ -70,3 +70,7 @@ next-env.d.ts
 
 # 一键验证日志（生成物，勿提交）
 /verify.log
+
+# 内部工作笔记（含密钥处理记录，绝不公开）
+PROJECT.md
+docs/最终交付报告.md

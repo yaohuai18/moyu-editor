@@ -48,7 +48,7 @@ async function freshAccount(label: string) {
 }
 
 /** 一段普通正文（不含魔术词，所以假服务会正常回话） */
-const PLAIN_TEXT = "雨停了。周砚站在窗前，看着楼下的水洼发呆。";
+const PLAIN_TEXT = "雨停了。程野站在窗前，看着楼下的水洼发呆。";
 
 function aiEdit(
   client: HttpClient,
@@ -200,6 +200,12 @@ describe("诊断与润色（成功路径）", () => {
       expect(issue.suggestion.length).toBeGreaterThan(0);
       expect(["low", "medium", "high"]).toContain(issue.severity);
     }
+
+    // P1-1：评分与总评随诊断一起返回（假上游固定给 42 分，验透传与范围）
+    expect(typeof response.body.score).toBe("number");
+    expect(response.body.score as number).toBeGreaterThanOrEqual(0);
+    expect(response.body.score as number).toBeLessThanOrEqual(100);
+    expect(typeof response.body.summary).toBe("string");
 
     const usage = response.body.usage as { used: number; limit: number };
 

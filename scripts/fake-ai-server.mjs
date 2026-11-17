@@ -92,13 +92,34 @@ const server = createServer((req, res) => {
         });
       }
 
-      // 诊断：固定形状（把 severity 三种都覆盖到）
+      // 文风蒸馏：固定形状（forbiddenWords 故意放一个重复项，验上游清洗）
+      if (prompt.includes("作品风格档案")) {
+        return reply(res, 200, {
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  tone: "冷峻克制",
+                  viewpoint: "第三人称限知",
+                  sentenceStyle: "短句为主，动作描写具体，对话少而硬",
+                  forbiddenWords: ["不由得", "心中一震", "瞳孔骤缩", "不由得"],
+                  summary: "语言克制，靠动作推进情绪。",
+                }),
+              },
+            },
+          ],
+        });
+      }
+
+      // 诊断：固定形状（把 severity 三种都覆盖到；带 score/summary 供透传断言）
       if (prompt.includes("诊断小说文本")) {
         return reply(res, 200, {
           choices: [
             {
               message: {
                 content: JSON.stringify({
+                  score: 42,
+                  summary: "两处模板化表达，一处节奏衔接生硬。",
                   issues: [
                     {
                       type: "空泛表达",
