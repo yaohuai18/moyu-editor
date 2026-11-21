@@ -1,3 +1,8 @@
+---
+name: verify-moyu
+description: "moyu-editor 的项目验证技能。在独立端口 3003 起真实实例，按 features/ 功能地图用真实用户路径（浏览器 + REST）驱动应用，并用数据库取证证明行为。适用场景：任何代码改动后的验收；任何「改好了」声明需要可复现证据时；怀疑「界面看着对、底下坏着」时。界面：Web UI + REST API。"
+---
+
 # moyu-editor 验证技能（verify-moyu）
 
 > 适用范围：`moyu-editor` 仓库任何代码改动之后的验收。
@@ -207,7 +212,7 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:3003/api/auth/register' -Method Post `
 - 动过 `src/lib/wordCount.ts` → 必须验字数（5.3 第 2 条）；
 - 动过章节接口 / 乐观锁 → 必须验 409（双标签页同时改同一章）；
 - 动过导出 → 必须验导出（点 `aria-label="导出选项"`，看菜单出现、**页面 URL 不变**、不出 500）；
-- 动过 AI 相关 → 见 `features/README.md` 的 AI 一节（要假 AI 服务，参见 `scripts/fake-ai-server.mjs`）。
+- 动过 AI 相关 → 见 `features/README.md` 的 AI 一节（要假 AI 服务，参见项目根下 `scripts/fake-ai-server.mjs`，不在本技能目录内）。
 
 ### 5.5 数据库取证（铁律一的执行）
 
@@ -308,7 +313,7 @@ await fetch('/api/account', {
 
 1. **沙箱内跑不了 `next build` 和 `npm run test:api`**（spawn EPERM）。这是 `verify.ps1` 第 7-8 行就写明的既有事实。绕法：直接 `& node .\node_modules\next\dist\bin\next build`，或到 dsh 外直接跑 `verify.cmd -Full`。
 2. **无 testid**：见第七节。想改的话是加 `data-testid`，属于代码改动，需要单独批准。
-3. **AI 路径要假服务**：真打 DeepSeek 费钱且不确定。`scripts/fake-ai-server.mjs` + 端口 11499 是现成方案（接口测试就是用它）。
+3. **AI 路径要假服务**：真打 DeepSeek 费钱且不确定。项目根下 `scripts/fake-ai-server.mjs` + 端口 11499 是现成方案（接口测试就是用它），不在本技能目录内。
 4. **浏览器是 DSH 的 browser_* 工具，不是 Playwright**。没有录制回放，每一步都是显式调用。好处是不用装依赖；坏处是没法一键重跑到 CI。
 5. **时区敏感**：`已保存 HH:mm:ss` 是本地时间（Asia/Shanghai），断言时间时别用 UTC 比。
 6. **`GET /api/projects/<id>` 不返回 `content` 和 `version`**（实测拿到 undefined / 0）。想断言正文或版本号，必须用 `GET /api/chapters/<id>`。拿列表接口断言会得到假的「内容为空」。
@@ -323,6 +328,24 @@ await fetch('/api/account', {
 - 单元/接口测试基线数字变了（现在是 unit 96 / api 87）→ 同步第四节和第六节。
 - 删掉了某条路径涉及的功能 → 从 `features/` 里删掉对应文件，别留着骗人。
 - 这份文件里的每个命令都**被真的跑过**才写进来。没跑过的写「未验证」三个字，不许写成肯定句。
+
+### 9.1 定期维护轮（借自 pstack `maintain-verification-skill`）
+
+功能地图在代码一变的瞬间就开始腐烂。除了上面的随改随同步，大改之后应做一轮完整维护，**结局必须三选一并明说**：
+
+| 结局 | 含义 | 产出 |
+|---|---|---|
+| `clean` | 每个功能都过了源码核对 + 实跑，无需修正 | 报告，不交付任何改动 |
+| `changed` | 有已证实的修正 | **一次**交付全部修正（改地图/脚本，不改产品代码） |
+| `blocked` | 覆盖没跑完或修正无法安全落地 | 报告写清具体卡在哪 |
+
+维护轮的硬规则：
+
+1. **编辑范围只有本技能目录**（SKILL.md、`features/`、`scripts/`）。绝不在维护轮里改产品代码——地图说有而 app 没有的行为，要么是文档漂移（改地图），要么是产品回归（**上报并记录**，不许在文档里糊弄过去）。
+2. **流程**：索引卫生（`features/` 文件不多不少不重复）→ 源码核对（每个功能文件对照源码查漂移，可并行只读）→ 对账 → **实跑**（每个功能至少真实驱动一次，源码干净也必须跑）→ 分诊（文档漂移改地图 / 工具缺口改脚本 / 产品缺陷记录上报）→ 结束。
+3. **实跑三条不变量**，无论发生什么失败：① doctor 先行——首次驱动前、每个新会话、任何一次失败驱动之后都要重跑 doctor；doctor 看不到的卡死（进程活着 UI 死了）→ 重置状态或重启，不要硬试；② 证据在**具名位置**存活——每次清理后核实，不许假定；③ 本轮启动的东西不活过本轮——失败的迭代残留也要清（共享实例清残留，不杀实例）。
+4. **到不了的功能**只能标 `verified-unreachable`，且必须写明具体前置条件（认证、外部状态、OS 限制）和尝试过的路径；地图里漏了这个前置条件 = 漂移，补进 `Gotchas`。
+5. doctor 失败若因技能漂移（文案改了、选择器失效）→ 修本技能后**重试一次**；再失败才准标 `blocked`。
 
 ---
 
