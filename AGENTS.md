@@ -45,6 +45,7 @@ Windows PowerShell 禁用 `npm.ps1`，npm 命令请走完整路径 `C:\Program F
 1. `verify.cmd -Full` 退出码为 0；
 2. 单元测试与接口测试数量不低于基线；数量变少必须先解释清楚；
 3. 新增或修改接口时，在 `tests/api` 补接口级用例，并把变更写进 `README.md` 的接口说明。
+4. **碰了界面就要跑 UI 验证**：见 `skills/verify-app/SKILL.md`。改 `editor-client.tsx` / `home-client.tsx` / `src/app/login` / 导出 / 切章 / 保存链路时必跑；最少跑 `skills/verify-app/features/03-chapter-autosave.md`。静态检查和 87 个接口测试都打不到浏览器，「界面说保存了、库里其实没落盘」只有这一层能查出来。
 
 **当前测试基线**：unit 96 / api 87（`npm.cmd run test` 与 build 后 `npm.cmd run test:api` 实测）。
 
@@ -82,3 +83,8 @@ Windows PowerShell 禁用 `npm.ps1`，npm 命令请走完整路径 `C:\Program F
 - 导出文件名必须**按 Unicode 码点切**，不能按 UTF-16 码元切。按码元截断会让 emoji 卡在截断边界留半个代理项，`encodeURIComponent` 抛 `URIError`，导出接口直接 500。
 - 导出菜单**不要用 `window.location.assign`**，要 fetch + blob，否则导出 500 时整个编辑页被导航走。
 - 切章前**必须先检查保存结果**，否则保存失败照样切章，正文丢失。
+
+**2026-11-21 实测复核**（见 `skills/verify-app/features/05-export.md`）：
+
+- emoji 码点截断那条**已修好**：`src/lib/export.ts:81` 用 `Array.from().slice()` 按码点切，`:286` 的 `encodeRfc5987` 再兜一层 `try/catch` 降级到 ASCII 文件名。实测 92 码点作品名导出 200、emoji 完整。
+- `CON` 保留名与孤立 `\r` 两条**确认仍存在**：实测 `CON` 导出文件名就是 `CON.txt`（Windows 无法创建）；正文孤立 `\r` 原样留在导出文件里。
