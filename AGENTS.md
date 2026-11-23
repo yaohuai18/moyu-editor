@@ -73,7 +73,7 @@ Windows PowerShell 禁用 `npm.ps1`，npm 命令请走完整路径 `C:\Program F
 
 ## 八、已知技术债
 
-- 导出文件名未处理 Windows 保留名（`CON` / `PRN` / `COM1` 等）；
+- 导出文件名无 Windows 保留名黑名单（`CON` / `PRN` / `COM1` 等原样输出）——对本机文件系统无碍，风险在其他平台与浏览器下载器（2026-11-23 复核，见本节末）；
 - 导出未处理孤立 `\r`；
 - 调序接口零测试覆盖；
 - npm audit 剩余 3 high / 9 moderate 全在开发工具链（prisma CLI 依赖链的 deepmerge-ts、vitest/mocker、minimatch），修复需 Prisma 6→7 大版本升级，待定。
@@ -87,4 +87,4 @@ Windows PowerShell 禁用 `npm.ps1`，npm 命令请走完整路径 `C:\Program F
 **2026-11-21 实测复核**（见 `skills/verify-app/features/05-export.md`）：
 
 - emoji 码点截断那条**已修好**：`src/lib/export.ts:81` 用 `Array.from().slice()` 按码点切，`:286` 的 `encodeRfc5987` 再兜一层 `try/catch` 降级到 ASCII 文件名。实测 92 码点作品名导出 200、emoji 完整。
-- `CON` 保留名与孤立 `\r` 两条**确认仍存在**：实测 `CON` 导出文件名就是 `CON.txt`（Windows 无法创建）；正文孤立 `\r` 原样留在导出文件里。
+- `CON` 保留名一条 **2026-11-23 复核订正**：导出确实原样返回 `CON.txt`（`sanitizeFilenamePart` 没有保留名黑名单），但「Windows 无法创建名为 CON 的文件」不成立——本机实测 `cmd /c "echo hello> CON.txt"` 在 E: 与 `C:\Users\牛\Downloads` 两处都建出 7 字节文件、`type CON.txt` 回读 `hello`；更早那条 `Access to the path ... is denied` 是沙箱/工具层拦截，被误记成操作系统行为。真实后果是兼容性（其他平台或浏览器下载器可能改名成 `CON (1).txt` 或拒绝），不是本机写不了。孤立 `\r` 一条**确认仍存在**：原样留在导出文件里。

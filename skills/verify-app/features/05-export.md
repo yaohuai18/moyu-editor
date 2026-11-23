@@ -1,7 +1,7 @@
 # 功能 05：导出
 
 > 实测状态：✅ **已实测**（2026-11-21 12:3x，moyu 起在 3003，`.next/BUILD_ID=mjHxcz6sxf9t0gYT2PvOr`）。
-> 三条历史边界：emoji ✅ 已修好、Windows 保留名 ❌ 仍会坏、孤立 `\r` ❌ 仍会坏。
+> 三条历史边界：emoji ✅ 已修好、Windows 保留名 ⚠️ 口径已订正（本机可创建，风险在跨平台与下载器）、孤立 `\r` ❌ 仍会坏。
 
 ---
 
@@ -63,7 +63,7 @@ ASCII 兜底            : AAAA…(59个A)…__.txt
 
 原因在 `src/lib/export.ts:81`：`Array.from(value).slice(0, max).join("")` 按**码点**切；万一还是出了半个代理项，`encodeRfc5987` 里 `try/catch` 会返回 `null` 并降级到 ASCII 兜底（`:286-294`）。两层保险都在，这条技术债可以划掉。
 
-### ❌ Windows 保留名 —— 实测确认仍会坏
+### ⚠️ Windows 保留名 —— 口径订正：不是「Windows 不允许」，是跨平台/下载器不友好
 
 作品名设成 `CON`，导出：
 
@@ -73,11 +73,11 @@ filename*: CON.txt
 filename : CON.txt
 ```
 
-接口照常返回 200，但 **Windows 不允许创建名为 `CON` 的文件**。实际后果取决于浏览器：要么下载失败没提示，要么被改名成 `CON (1).txt`。用户看到的是「点了导出没反应」。
+接口照常返回 200，文件名就是 `CON.txt`。**2026-11-23 复核订正**：本文件原来写「Windows 不允许创建名为 `CON` 的文件」，这个结论不成立——同机实测（提权后 `cmd /c "echo hello> CON.txt"`）在 `E:\...\.sandbox\moyu-acceptance\order4\` 与 `C:\Users\牛\Downloads` 两处都建出 7 字节文件，`type CON.txt` 回读 `hello`，`dir` 也列得出来；更早那次 `Access to the path ... is denied` 是沙箱/工具层拦截，被误记成了操作系统行为。真实后果是**兼容性而非可写性**：其他平台、浏览器下载器或解压工具有可能改名成 `CON (1).txt` 或直接拒绝，用户可能看到「点了导出没反应」，但根因在下游工具，不是这台机器写不了文件。
 
 `sanitizeFilenamePart`（`src/lib/export.ts:44`）只过滤 `\ / : * ? " < > |` 和控制字符，**没有保留名黑名单**。
 
-**修法**（改的时候可以照抄）：
+**可选加固**（不是修 bug，是提高跨平台/下载器兼容性的加固；要加就照抄）：
 
 ```ts
 const WINDOWS_RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
