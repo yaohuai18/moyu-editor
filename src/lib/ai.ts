@@ -394,7 +394,7 @@ export async function runAiEdit(input: AiEditInput): Promise<AiEditResult> {
   }
 
   if (!result.ok) {
-    console.error("AI provider error:", result.status, result.content?.slice(0, 300));
+    console.error("AI provider error:", result.status, "contentLength=", result.content?.length ?? 0);
 
     throw new AiError("AI_PROVIDER_ERROR", { upstreamStatus: result.status });
   }
@@ -408,7 +408,7 @@ export async function runAiEdit(input: AiEditInput): Promise<AiEditResult> {
   try {
     parsed = JSON.parse(extractJson(result.content));
   } catch {
-    console.error("AI returned non-JSON content:", result.content.slice(0, 400));
+    console.error("AI returned non-JSON content:", "contentLength=", result.content.length);
 
     throw new AiError("AI_INVALID_FORMAT");
   }
@@ -621,7 +621,7 @@ export async function runStyleDistill(
     console.error(
       "AI distill provider error:",
       result.status,
-      result.content?.slice(0, 300)
+      "contentLength=", result.content?.length ?? 0
     );
 
     throw new AiError("AI_PROVIDER_ERROR", { upstreamStatus: result.status });
@@ -636,7 +636,7 @@ export async function runStyleDistill(
   try {
     parsed = JSON.parse(extractJson(result.content));
   } catch {
-    console.error("AI distill returned non-JSON:", result.content.slice(0, 400));
+    console.error("AI distill returned non-JSON:", "contentLength=", result.content.length);
 
     throw new AiError("AI_INVALID_FORMAT");
   }
